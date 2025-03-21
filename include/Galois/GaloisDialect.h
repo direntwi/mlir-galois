@@ -11,6 +11,7 @@
 
 #include "mlir/Bytecode/BytecodeOpInterface.h"
 #include "mlir/IR/Dialect.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 
 #include "Galois/GaloisOpsDialect.h.inc"
 

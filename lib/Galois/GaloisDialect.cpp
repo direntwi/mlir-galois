@@ -9,6 +9,7 @@
 #include "Galois/GaloisDialect.h"
 #include "Galois/GaloisOps.h"
 #include "Galois/GaloisTypes.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 
 using namespace mlir;
 using namespace mlir::galois;

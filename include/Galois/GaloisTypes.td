@@ -21,10 +21,15 @@ class Galois_Type<string name, string typeMnemonic, list<Trait> traits = []>
   let mnemonic = typeMnemonic;
 }
 
-def Galois_CustomType : Galois_Type<"Custom", "custom"> {
-    let summary = "Galois custom type";
-    let description = "Custom type in galois dialect";
-    let parameters = (ins StringRefParameter<"the custom value">:$value);
+def Galois_GF8Type : Galois_Type<"GF8", "gf8"> {
+    let summary = "Galois GF(2^8) type";
+    let description = [{
+      This is a custom type in the Galois dialect representing elements of GF(2^8).
+      It ensures that operations within this dialect receive valid 8-bit values
+      and prevents invalid input types.
+    }];
+
+    let parameters = (ins "unsigned":$value);
     let assemblyFormat = "`<` $value `>`";
 }
 

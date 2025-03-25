@@ -22,5 +22,5 @@ void GaloisDialect::registerTypes() {
   addTypes<
 #define GET_TYPEDEF_LIST
 #include "Galois/GaloisOpsTypes.cpp.inc"
-      >();
+      , GF8Type>();
 }

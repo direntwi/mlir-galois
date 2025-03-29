@@ -9,6 +9,10 @@
 #ifndef GALOIS_GALOISTYPES_H
 #define GALOIS_GALOISTYPES_H
 
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/Diagnostics.h"
+#include "mlir/Support/LogicalResult.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 
 #define GET_TYPEDEF_CLASSES

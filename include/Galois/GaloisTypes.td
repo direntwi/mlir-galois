@@ -9,6 +9,8 @@
 #ifndef GALOIS_TYPES
 #define GALOIS_TYPES
 
+include "Galois/GaloisAttributes.td"
+include "mlir/IR/BuiltinAttributes.td"
 include "mlir/IR/AttrTypeBase.td"
 include "Galois/GaloisDialect.td"
 
@@ -29,8 +31,9 @@ def Galois_GF8Type : Galois_Type<"GF8", "gf8"> {
       and prevents invalid input types.
     }];
 
-    let parameters = (ins "unsigned":$value);
+    let parameters = (ins Galois_GF8ConstantAttr:$value);
     let assemblyFormat = "`<` $value `>`";
+    let genVerifyDecl = 1;
 }
 
 #endif // GALOIS_TYPES

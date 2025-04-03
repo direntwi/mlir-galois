@@ -28,7 +28,7 @@ def Galois_GF8ConstantAttr : Galois_Attr<"GF8Constant", "gf8constant"> {
   
   let parameters = (ins "IntegerAttr":$value);
 
-  let hasCustomAssemblyFormat = 1;
+  let assemblyFormat = "`<` $value `>`";
 
   let genVerifyDecl = 1;
 }

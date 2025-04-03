@@ -43,4 +43,15 @@ def Galois_FooOp : Galois_Op<"foo", [Pure,
     }];
 }
 
+def Galois_ConstantOp : Galois_Op<"constant", [Pure]> {
+    let summary = "Creates a constant GF(2^8) value.";
+    let description = [{
+      This operation defines a constant in GF(2^8) using a GF8ConstantAttr.
+    }];
+
+    let arguments = (ins Galois_GF8ConstantAttr:$value);
+    let results = (outs Galois_GF8Type:$res);
+
+    let assemblyFormat = " $value attr-dict `:` type($res)";
+}
 #endif // GALOIS_OPS

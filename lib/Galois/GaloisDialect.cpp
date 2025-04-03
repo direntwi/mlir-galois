@@ -8,9 +8,10 @@
 
 #include "Galois/GaloisDialect.h"
 #include "Galois/GaloisAttributes.h"
-#include "Galois/GaloisOps.h"
 #include "Galois/GaloisTypes.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "Galois/GaloisOps.h"
+#include "mlir/IR/DialectImplementation.h"
+// #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;
@@ -31,9 +32,9 @@ void GaloisDialect::initialize() {
 #define GET_ATTRDEF_LIST
 #include "Galois/GaloisAttributes.cpp.inc"
   >();
+  registerTypes();
   addOperations<
 #define GET_OP_LIST
 #include "Galois/GaloisOps.cpp.inc"
       >();
-  registerTypes();
 }

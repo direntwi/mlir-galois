@@ -30,10 +30,6 @@ def Galois_GF8Type : Galois_Type<"GF8", "gf8"> {
       It ensures that operations within this dialect receive valid 8-bit values
       and prevents invalid input types.
     }];
-
-    let parameters = (ins Galois_GF8ConstantAttr:$value);
-    let assemblyFormat = "`<` $value `>`";
-    let genVerifyDecl = 1;
 }
 
 #endif // GALOIS_TYPES

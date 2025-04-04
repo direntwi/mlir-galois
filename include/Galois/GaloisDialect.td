@@ -26,12 +26,13 @@ def Galois_Dialect : Dialect {
     let cppNamespace = "::mlir::galois";
 
     let useDefaultTypePrinterParser = 1;
+    let useDefaultAttributePrinterParser = 1;
     let extraClassDeclaration = [{
         void registerTypes();
     }];
-    let dependentDialects = [
-    "arith::ArithDialect"
-  ];
+//     let dependentDialects = [//
+//     "arith::ArithDialect" //
+//   ];//
 }
 
 //===----------------------------------------------------------------------===//

@@ -11,7 +11,11 @@
 
 #include "mlir/Bytecode/BytecodeOpInterface.h"
 #include "mlir/IR/Dialect.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/AsmState.h"
+#include "mlir/IR/AttributeSupport.h"
+#include "Galois/GaloisAttributes.h"
+#include "Galois/GaloisTypes.h"
+// #include "mlir/Dialect/Arith/IR/Arith.h"
 
 #include "Galois/GaloisOpsDialect.h.inc"
 

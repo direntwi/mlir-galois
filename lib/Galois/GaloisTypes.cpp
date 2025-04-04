@@ -19,19 +19,8 @@
 #define GET_TYPEDEF_CLASSES
 #include "Galois/GaloisOpsTypes.cpp.inc"
 
-using namespace mlir;
 using namespace mlir::galois;
 
-mlir::LogicalResult mlir::galois::GF8Type::verify(function_ref<InFlightDiagnostic()> emitError, mlir::galois::GF8ConstantAttr value) {
-    // Get the integer value stored inside the GF8_ConstantAttr
-    int64_t num = value.getValue().getValue().getZExtValue();
-
-    // Ensure it's within the valid range [0, 255]
-    if (num < 0 || num > 255) {
-      return emitError() << "GF8 constant must be in range2 [0, 255], but got: " << num;
-    }
-    return success();
-}
 
 void GaloisDialect::registerTypes() {
   addTypes<

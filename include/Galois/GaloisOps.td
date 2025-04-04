@@ -16,6 +16,7 @@ include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 // include "mlir/Dialect/Arith/IR/ArithOps.td"
 
+
 def Galois_FooOp : Galois_Op<"foo", [Pure,
                                              SameOperandsAndResultType]> {
     let summary = "Illustrates how to define an operation.";

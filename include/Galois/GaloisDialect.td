@@ -29,6 +29,9 @@ def Galois_Dialect : Dialect {
     let extraClassDeclaration = [{
         void registerTypes();
     }];
+    let dependentDialects = [
+    "arith::ArithDialect"
+  ];
 }
 
 //===----------------------------------------------------------------------===//

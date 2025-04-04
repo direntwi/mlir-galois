@@ -9,9 +9,13 @@
 #ifndef GALOIS_OPS
 #define GALOIS_OPS
 
+include "mlir/IR/BuiltinAttributes.td"
+include "Galois/GaloisAttributes.td"
 include "Galois/GaloisTypes.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+// include "mlir/Dialect/Arith/IR/ArithOps.td"
+
 
 def Galois_FooOp : Galois_Op<"foo", [Pure,
                                              SameOperandsAndResultType]> {

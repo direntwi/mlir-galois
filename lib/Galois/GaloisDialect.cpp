@@ -7,8 +7,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "Galois/GaloisDialect.h"
+#include "Galois/GaloisAttributes.h"
 #include "Galois/GaloisOps.h"
 #include "Galois/GaloisTypes.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;
 using namespace mlir::galois;
@@ -19,7 +22,15 @@ using namespace mlir::galois;
 // Galois dialect.
 //===----------------------------------------------------------------------===//
 
+#define GET_ATTRDEF_CLASSES
+#include "Galois/GaloisAttributes.cpp.inc"
+
+
 void GaloisDialect::initialize() {
+  addAttributes<
+#define GET_ATTRDEF_LIST
+#include "Galois/GaloisAttributes.cpp.inc"
+  >();
   addOperations<
 #define GET_OP_LIST
 #include "Galois/GaloisOps.cpp.inc"

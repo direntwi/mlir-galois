@@ -8,6 +8,7 @@
 
 #include "Galois/GaloisOps.h"
 #include "Galois/GaloisDialect.h"
+// #include "mlir/Dialect/Arith/IR/Arith.h"
 
 #define GET_OP_CLASSES
 #include "Galois/GaloisOps.cpp.inc"

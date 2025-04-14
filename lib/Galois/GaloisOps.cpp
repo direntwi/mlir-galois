@@ -9,6 +9,38 @@
 #include "Galois/GaloisOps.h"
 #include "Galois/GaloisDialect.h"
 // #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/BuiltinTypes.h"
 
 #define GET_OP_CLASSES
 #include "Galois/GaloisOps.cpp.inc"
+
+using namespace mlir;
+using namespace mlir::galois;
+
+
+//===----------------------------------------------------------------------===//
+// Type Conversion Ops
+//===----------------------------------------------------------------------===//
+
+LogicalResult ToIntegerOp::verify() {
+    if (!mlir::isa<GF8Type>(getInput().getType()))
+        return emitOpError("expects input to be of type !galois.gf8");
+    return success();
+}
+
+
+LogicalResult FromIntegerOp::verify() {
+    auto intType = mlir::dyn_cast<IntegerType>(getInput().getType());
+    if (!intType || intType.getWidth() != 32)
+        return emitOpError("expects a 32-bit integer input");
+
+    // Ensure the value is in the range [0, 255]
+    if (auto constantOp = getInput().getDefiningOp<arith::ConstantOp>()) {
+        auto intValue = mlir::dyn_cast<IntegerAttr>(constantOp.getValue());
+        if (!intValue)
+            return emitOpError("expects a constant integer input");
+        if (intValue.getInt() < 0 || intValue.getInt() > 255)
+            return emitOpError("input value must be in range [0, 255]");
+    }
+    return success();
+}

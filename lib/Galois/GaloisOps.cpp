@@ -8,8 +8,10 @@
 
 #include "Galois/GaloisOps.h"
 #include "Galois/GaloisDialect.h"
-// #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Matchers.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 
 #define GET_OP_CLASSES
 #include "Galois/GaloisOps.cpp.inc"
@@ -41,6 +43,35 @@ LogicalResult FromIntegerOp::verify() {
             return emitOpError("expects a constant integer input");
         if (intValue.getInt() < 0 || intValue.getInt() > 255)
             return emitOpError("input value must be in range [0, 255]");
+    }
+    return success();
+}
+
+
+//===----------------------------------------------------------------------===//
+// AddOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult AddOp::verify() {
+    if (!getLhs().getType().isInteger(32) || !getRhs().getType().isInteger(32)) {
+        return emitOpError("expects i32 input operands");
+    }
+    if (!getResult().getType().isInteger(32)) {
+        return emitOpError("expects i32 output");
+    }    
+    auto checkOperand = [&](Value operand) -> LogicalResult {
+        IntegerAttr value;
+        if (matchPattern(operand, m_Constant(&value))) {
+            int64_t val = value.getValue().getSExtValue();
+            if (val < 0 || val > 255) {
+                return emitOpError()
+                    << "operand value " << val << " out of range [0,255]";
+            }
+        }
+        return success();
+    };
+    if (failed(checkOperand(getLhs())) || failed(checkOperand(getRhs()))) {
+        return failure();
     }
     return success();
 }

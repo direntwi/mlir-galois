@@ -18,6 +18,8 @@ namespace galois {
 #define GEN_PASS_DECL
 #include "Galois/GaloisPasses.h.inc"
 
+std::unique_ptr<Pass> createConvertGaloisToArithPass();
+
 #define GEN_PASS_REGISTRATION
 #include "Galois/GaloisPasses.h.inc"
 } // namespace galois

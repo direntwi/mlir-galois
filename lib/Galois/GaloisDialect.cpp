@@ -11,7 +11,7 @@
 #include "Galois/GaloisTypes.h"
 #include "Galois/GaloisOps.h"
 #include "mlir/IR/DialectImplementation.h"
-// #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;

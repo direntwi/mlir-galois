@@ -72,4 +72,12 @@ def Galois_FromIntegerOp : Galois_Op<"from_integer", [Pure]> {
     let hasVerifier = 1;
     let assemblyFormat = "$input attr-dict `:` type($res)";
 }
+
+def Galois_AddOp : Galois_Op<"add", [Pure]> {
+    let summary = "Addition in GF(2^8) using XOR.";
+    let description = [{}];
+    let hasVerifier = 1;
+    let arguments = (ins I32:$lhs, I32:$rhs);
+    let results = (outs I32:$res);
+}
 #endif // GALOIS_OPS

@@ -27,4 +27,10 @@ def GaloisSwitchBarFoo: Pass<"galois-switch-bar-foo", "::mlir::ModuleOp"> {
   }];
 }
 
+def ConvertGaloisToArith : Pass<"convert-galois-to-arith"> {
+  let summary = "Lower Galois dialect ops to Arith dialect";
+  let constructor = "mlir::galois::createConvertGaloisToArithPass()";
+  let dependentDialects = ["arith::ArithDialect"];
+}
+
 #endif // GALOIS_PASS

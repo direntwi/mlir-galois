@@ -9,7 +9,10 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Rewrite/FrozenRewritePatternSet.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Transforms/DialectConversion.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 
+#include "Galois/GaloisOps.h"
 #include "Galois/GaloisPasses.h"
 
 namespace mlir::galois {
@@ -44,4 +47,54 @@ public:
   }
 };
 } // namespace
+
+struct GaloisAddOpLowering : public OpRewritePattern<galois::AddOp> {
+  using OpRewritePattern<galois::AddOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(galois::AddOp op, 
+                                PatternRewriter &rewriter) const override {
+    Value lhs = op.getLhs();
+    Value rhs = op.getRhs();
+    Location loc = op.getLoc();
+
+    // XOR the two operands
+    Value xorResult = rewriter.create<arith::XOrIOp>(loc, lhs, rhs);
+    
+    // Create 0xFF mask (i32) and apply to keep lower 8 bits
+    Value mask = rewriter.create<arith::ConstantIntOp>(loc, 0xFF, 32);
+    Value result = rewriter.create<arith::AndIOp>(loc, xorResult, mask);
+    
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+struct ConvertGaloisToArithPass 
+    : public PassWrapper<ConvertGaloisToArithPass, OperationPass<>> {
+  
+  StringRef getArgument() const final { return "convert-galois-to-arith"; }
+  StringRef getDescription() const final { 
+    return "Convert Galois ops to Arith dialect operations"; 
+  }
+  
+  void getDependentDialects(DialectRegistry &registry) const override {
+    registry.insert<arith::ArithDialect>();
+  }
+
+  void runOnOperation() override {
+    ConversionTarget target(getContext());
+    target.addIllegalOp<galois::AddOp>();
+    target.addLegalDialect<arith::ArithDialect>();
+
+    RewritePatternSet patterns(&getContext());
+    patterns.add<GaloisAddOpLowering>(&getContext());
+
+    if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
+      signalPassFailure();
+  }
+};
+
+std::unique_ptr<Pass> createConvertGaloisToArithPass() { 
+  return std::make_unique<ConvertGaloisToArithPass>();
+}
 } // namespace mlir::galois

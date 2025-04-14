@@ -50,8 +50,26 @@ def Galois_ConstantOp : Galois_Op<"constant", [Pure]> {
     }];
 
     let arguments = (ins Galois_GF8ConstantAttr:$value);
-    let results = (outs Galois_GF8Type:$res);
+    let results = (outs I32:$res);
 
     let assemblyFormat = " $value attr-dict `:` type($res)";
+}
+
+def Galois_ToIntegerOp : Galois_Op<"to_integer", [Pure]> {
+    let summary = "Converts GF(2^8) type to i32.";
+    let description = [{}];
+    let arguments = (ins Galois_GF8Type:$input);
+    let results = (outs I32:$res);
+    let hasVerifier = 1;
+    let assemblyFormat = "$input attr-dict `:` type($res)";
+}
+
+def Galois_FromIntegerOp : Galois_Op<"from_integer", [Pure]> {
+    let summary = "Converts i32 to GF(2^8).";
+    let description = [{}];
+    let arguments = (ins I32:$input);
+    let results = (outs Galois_GF8Type:$res);
+    let hasVerifier = 1;
+    let assemblyFormat = "$input attr-dict `:` type($res)";
 }
 #endif // GALOIS_OPS

@@ -79,5 +79,6 @@ def Galois_AddOp : Galois_Op<"add", [Pure]> {
     let hasVerifier = 1;
     let arguments = (ins I32:$lhs, I32:$rhs);
     let results = (outs I32:$res);
+    let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($res)";
 }
 #endif // GALOIS_OPS

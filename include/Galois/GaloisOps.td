@@ -14,7 +14,6 @@ include "Galois/GaloisAttributes.td"
 include "Galois/GaloisTypes.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
-// include "mlir/Dialect/Arith/IR/ArithOps.td"
 
 def Galois_FooOp : Galois_Op<"foo", [Pure,
                                              SameOperandsAndResultType]> {
@@ -79,5 +78,18 @@ def Galois_AddOp : Galois_Op<"add", [Pure]> {
     let hasVerifier = 1;
     let arguments = (ins I32:$lhs, I32:$rhs);
     let results = (outs I32:$res);
+    let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($res)";
+}
+
+def GF_MulOp : Galois_Op<"mul", [Pure]> {
+    let summary = "Multiplication in GF(2^8)";
+    let description = [{
+        Performs multiplication in GF(2^8) via log/antilog table lookups.
+        The op takes two GF field elements and produces a GF field element result.
+    }];
+    let hasVerifier = 1;
+    let arguments = (ins I32:$lhs, I32:$rhs);
+    let results = (outs I32:$res);
+    let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($res)";
 }
 #endif // GALOIS_OPS

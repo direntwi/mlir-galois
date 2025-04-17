@@ -15,7 +15,8 @@
 #include "mlir/IR/AttributeSupport.h"
 #include "Galois/GaloisAttributes.h"
 #include "Galois/GaloisTypes.h"
-// #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 
 #include "Galois/GaloisOpsDialect.h.inc"
 

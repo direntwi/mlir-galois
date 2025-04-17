@@ -75,3 +75,31 @@ LogicalResult AddOp::verify() {
     }
     return success();
 }
+
+//===----------------------------------------------------------------------===//
+// MulOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult MulOp::verify() {
+    if (!getLhs().getType().isInteger(32) || !getRhs().getType().isInteger(32)) {
+        return emitOpError("expects i32 input operands");
+    }
+    if (!getResult().getType().isInteger(32)) {
+        return emitOpError("expects i32 output");
+    }    
+    auto checkOperand = [&](Value operand) -> LogicalResult {
+        IntegerAttr value;
+        if (matchPattern(operand, m_Constant(&value))) {
+            int64_t val = value.getValue().getSExtValue();
+            if (val < 0 || val > 255) {
+                return emitOpError()
+                    << "operand value " << val << " out of range [0,255]";
+            }
+        }
+        return success();
+    };
+    if (failed(checkOperand(getLhs())) || failed(checkOperand(getRhs()))) {
+        return failure();
+    }
+    return success();
+}

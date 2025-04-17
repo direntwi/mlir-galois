@@ -18,4 +18,5 @@ add_mlir_dialect_library(MLIRGalois
         MLIRInferTypeOpInterface
         MLIRFuncDialect
         MLIRArithDialect
+        MLIRTensorDialect
         )

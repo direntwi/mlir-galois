@@ -31,7 +31,8 @@ def Galois_Dialect : Dialect {
         void registerTypes();
     }];
     let dependentDialects = [
-    "arith::ArithDialect" 
+    "arith::ArithDialect",
+    "tensor::TensorDialect"
   ];
 }
 

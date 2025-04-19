@@ -81,7 +81,7 @@ def Galois_AddOp : Galois_Op<"add", [Pure]> {
     let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($res)";
 }
 
-def GF_MulOp : Galois_Op<"mul", [Pure]> {
+def Galois_MulOp : Galois_Op<"mul", [Pure]> {
     let summary = "Multiplication in GF(2^8)";
     let description = [{
         Performs multiplication in GF(2^8) via log/antilog table lookups.
@@ -91,5 +91,18 @@ def GF_MulOp : Galois_Op<"mul", [Pure]> {
     let arguments = (ins I32:$lhs, I32:$rhs);
     let results = (outs I32:$res);
     let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($res)";
+}
+
+def Galois_InvOp : Galois_Op<"inv", [Pure]> {
+    let summary = "Multiplicative inverse in GF(2^8)";
+    let description = [{
+        Computes the multiplicative inverse of a non‑zero GF(2^8) element
+        by performing a log lookup, subtracting from 255, then doing an antilog lookup.
+    }];
+
+    let arguments = (ins I32:$input);
+    let results = (outs I32:$res);
+    let hasVerifier = 1;
+    let assemblyFormat = "$input attr-dict `:` type($res)";
 }
 #endif // GALOIS_OPS

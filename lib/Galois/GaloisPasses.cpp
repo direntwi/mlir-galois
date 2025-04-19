@@ -163,6 +163,76 @@ struct GaloisMulOpLowering : public OpRewritePattern<galois::MulOp> {
   }
 };
 
+struct GaloisInvOpLowering : public OpRewritePattern<galois::InvOp> {
+  using OpRewritePattern<galois::InvOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(galois::InvOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    if (!module)
+      return rewriter.notifyMatchFailure(op, "not inside a module");
+
+    // 1) Inject lookup‑table funcs if missing
+    if (!module.lookupSymbol<func::FuncOp>("log_table")) {
+      auto savePt = rewriter.saveInsertionPoint();
+      rewriter.setInsertionPointToEnd(module.getBody());
+      OwningOpRef<ModuleOp> tableMod =
+        parseSourceString<ModuleOp>(mlir::galois::kGaloisLookupTables,
+                                    rewriter.getContext());
+      if (!tableMod)
+        return failure();
+      SymbolTable symtab(module);
+      for (auto fn : tableMod->getOps<func::FuncOp>())
+        if (!module.lookupSymbol(fn.getName()))
+          rewriter.clone(*fn.getOperation());
+      rewriter.restoreInsertionPoint(savePt);
+    }
+
+    // 2) Zero check
+    Value in = op.getOperand();
+    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+    Value isZero = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, in, zero);
+
+    // 3) log lookup
+    auto logSym = SymbolRefAttr::get(rewriter.getContext(), "log_table");
+    auto logTy = RankedTensorType::get({256}, rewriter.getIntegerType(32));
+    Value logTbl = rewriter
+                       .create<func::CallOp>(loc, logSym, logTy, ValueRange{})
+                       .getResult(0);
+
+    // index-cast input -> index
+    Value inIdx =
+        rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), in);
+    Value logVal = rewriter.create<tensor::ExtractOp>(
+        loc, logTbl, ArrayRef<Value>{inIdx});
+
+    // 4) compute (255 - logVal) mod 255
+    Value c255 = rewriter.create<arith::ConstantIntOp>(loc, 255, 32);
+    Value diff  = rewriter.create<arith::SubIOp>(loc, c255, logVal);
+    Value invIdx = rewriter.create<arith::RemSIOp>(loc, diff, c255);
+
+    // 5) antilog lookup
+    auto antiSym = SymbolRefAttr::get(rewriter.getContext(), "antilog_table");
+    auto antiTy  = RankedTensorType::get({510}, rewriter.getIntegerType(32));
+    Value antiTbl = rewriter
+                        .create<func::CallOp>(loc, antiSym, antiTy, ValueRange{})
+                        .getResult(0);
+
+    // cast invIdx -> index and extract
+    Value idx  = rewriter.create<arith::IndexCastOp>(loc,
+                          rewriter.getIndexType(), invIdx);
+    Value res  = rewriter.create<tensor::ExtractOp>(
+        loc, antiTbl, ArrayRef<Value>{idx});
+
+    // 6) select zero vs. result
+    Value result = rewriter.create<arith::SelectOp>(loc, isZero, zero, res);
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
 struct ConvertGaloisToArithPass 
     : public PassWrapper<ConvertGaloisToArithPass, OperationPass<ModuleOp>> {
   
@@ -179,12 +249,15 @@ struct ConvertGaloisToArithPass
     ConversionTarget target(getContext());
     target.addIllegalOp<galois::AddOp>();
     target.addIllegalOp<galois::MulOp>();
+    target.addIllegalOp<galois::InvOp>();
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<func::FuncDialect>();
     target.addLegalDialect<tensor::TensorDialect>();
 
     RewritePatternSet patterns(&getContext());
-    patterns.add<GaloisAddOpLowering, GaloisMulOpLowering>(&getContext());
+    patterns.add<GaloisAddOpLowering, 
+                 GaloisMulOpLowering,
+                 GaloisInvOpLowering>(&getContext());
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();

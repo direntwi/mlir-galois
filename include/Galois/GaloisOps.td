@@ -105,4 +105,18 @@ def Galois_InvOp : Galois_Op<"inv", [Pure]> {
     let hasVerifier = 1;
     let assemblyFormat = "$input attr-dict `:` type($res)";
 }
+
+def Galois_SBoxOp : Galois_Op<"sbox", [Pure]> {
+  let summary = "AES S‑Box byte substitution in GF(2^8)";
+  let description = [{
+    Replaces an input byte x with SBox[x], where SBox is the
+    standard 256‑entry AES substitution box.
+  }];
+
+  let arguments = (ins I32:$input);
+  let results = (outs I32:$res);
+  let hasVerifier = 1;
+  let assemblyFormat = "$input attr-dict `:` type($res)";
+}
+
 #endif // GALOIS_OPS

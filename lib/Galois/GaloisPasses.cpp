@@ -90,7 +90,7 @@ struct GaloisMulOpLowering : public OpRewritePattern<galois::MulOp> {
       // Parse the embedded module containing log and antilog tables.
       OwningOpRef<mlir::ModuleOp> lookupTablesModule =
           parseSourceString<mlir::ModuleOp>(
-              mlir::galois::kGaloisLookupTables, rewriter.getContext());
+              mlir::galois::kLogAntilogTables, rewriter.getContext());
       if (!lookupTablesModule)
         return failure();
 
@@ -178,7 +178,7 @@ struct GaloisInvOpLowering : public OpRewritePattern<galois::InvOp> {
       auto savePt = rewriter.saveInsertionPoint();
       rewriter.setInsertionPointToEnd(module.getBody());
       OwningOpRef<ModuleOp> tableMod =
-        parseSourceString<ModuleOp>(mlir::galois::kGaloisLookupTables,
+        parseSourceString<ModuleOp>(mlir::galois::kLogAntilogTables,
                                     rewriter.getContext());
       if (!tableMod)
         return failure();
@@ -233,6 +233,51 @@ struct GaloisInvOpLowering : public OpRewritePattern<galois::InvOp> {
   }
 };
 
+
+struct GaloisSBoxOpLowering : public OpRewritePattern<galois::SBoxOp> {
+  using OpRewritePattern<galois::SBoxOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(galois::SBoxOp op,
+                                PatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto module = op->getParentOfType<ModuleOp>();
+
+    // 1) Ensure sbox_table is in the module:
+    if (!module.lookupSymbol<func::FuncOp>("sbox_table")) {
+      auto savePt = rewriter.saveInsertionPoint();
+      rewriter.setInsertionPointToEnd(module.getBody());
+      auto tblMod = parseSourceString<ModuleOp>(
+          mlir::galois::kSBoxLookupTable, rewriter.getContext());
+      if (!tblMod) return failure();
+      SymbolTable sym(module);
+      for (auto fn : tblMod->getOps<func::FuncOp>())
+        if (!module.lookupSymbol(fn.getName()))
+          rewriter.clone(*fn.getOperation());
+      rewriter.restoreInsertionPoint(savePt);
+    }
+
+    // 2) Perform the table lookup:
+    Value in = op.getInput();
+    // call @sbox_table() -> tensor<256xi32>
+    auto sym = SymbolRefAttr::get(rewriter.getContext(), "sbox_table");
+    auto tblTy = RankedTensorType::get({256}, rewriter.getI32Type());
+    Value table = rewriter
+      .create<func::CallOp>(loc, sym, tblTy, ValueRange{})
+      .getResult(0);
+
+    // index‑cast the input byte to an index:
+    Value idx = rewriter.create<arith::IndexCastOp>(
+      loc, rewriter.getIndexType(), in);
+
+    // extract the substituted byte:
+    Value out = rewriter.create<tensor::ExtractOp>(
+      loc, table, ArrayRef<Value>{idx});
+
+    rewriter.replaceOp(op, out);
+    return success();
+  }
+};
+
 struct ConvertGaloisToArithPass 
     : public PassWrapper<ConvertGaloisToArithPass, OperationPass<ModuleOp>> {
   
@@ -250,6 +295,7 @@ struct ConvertGaloisToArithPass
     target.addIllegalOp<galois::AddOp>();
     target.addIllegalOp<galois::MulOp>();
     target.addIllegalOp<galois::InvOp>();
+    target.addIllegalOp<galois::SBoxOp>();
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<func::FuncDialect>();
     target.addLegalDialect<tensor::TensorDialect>();
@@ -257,7 +303,8 @@ struct ConvertGaloisToArithPass
     RewritePatternSet patterns(&getContext());
     patterns.add<GaloisAddOpLowering, 
                  GaloisMulOpLowering,
-                 GaloisInvOpLowering>(&getContext());
+                 GaloisInvOpLowering,
+                 GaloisSBoxOpLowering>(&getContext());
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();

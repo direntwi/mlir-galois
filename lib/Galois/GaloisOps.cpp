@@ -133,3 +133,18 @@ LogicalResult SBoxOp::verify() {
     }
     return success();
 }
+
+//===----------------------------------------------------------------------===//
+// LFSRStepOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult LFSRStepOp::verify() {
+    if (auto constantOp = getInput().getDefiningOp<arith::ConstantOp>()) {
+        auto intValue = mlir::dyn_cast<IntegerAttr>(constantOp.getValue());
+        if (!intValue)
+            return emitOpError("expects a constant integer input");
+        if (intValue.getInt() < 0 || intValue.getInt() > 255)
+            return emitOpError("input value must be in range [0, 255]");
+    }
+    return success();
+}

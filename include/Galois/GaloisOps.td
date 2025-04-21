@@ -107,16 +107,32 @@ def Galois_InvOp : Galois_Op<"inv", [Pure]> {
 }
 
 def Galois_SBoxOp : Galois_Op<"sbox", [Pure]> {
-  let summary = "AES S‑Box byte substitution in GF(2^8)";
-  let description = [{
-    Replaces an input byte x with SBox[x], where SBox is the
-    standard 256‑entry AES substitution box.
-  }];
+    let summary = "AES S‑Box byte substitution in GF(2^8)";
+    let description = [{
+        Replaces an input byte x with SBox[x], where SBox is the
+        standard 256‑entry AES substitution box.
+    }];
 
-  let arguments = (ins I32:$input);
-  let results = (outs I32:$res);
-  let hasVerifier = 1;
-  let assemblyFormat = "$input attr-dict `:` type($res)";
+    let arguments = (ins I32:$input);
+    let results = (outs I32:$res);
+    let hasVerifier = 1;
+    let assemblyFormat = "$input attr-dict `:` type($res)";
+}
+
+def Galois_LFSRStepOp : Galois_Op<"lfsr_step", [Pure]> {
+    let summary = "Compute the next state of an N‑bit LFSR given the current state";
+    let description = [{
+        Takes a single integer state and two attributes:
+        - `width` : IntegerAttr, the bit‑width of the register (≤32).
+        - `taps`  : ArrayAttr of IntegerAttr, listing bit positions whose XOR 
+                    forms the feedback bit.
+        Returns the next state.
+    }];
+
+    let arguments = (ins I32:$input);
+    let results = (outs I32:$res);
+    let hasVerifier = 1;
+    let assemblyFormat = "$input attr-dict `:` type($res)";
 }
 
 #endif // GALOIS_OPS

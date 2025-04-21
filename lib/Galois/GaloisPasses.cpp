@@ -278,6 +278,55 @@ struct GaloisSBoxOpLowering : public OpRewritePattern<galois::SBoxOp> {
   }
 };
 
+struct GaloisLFSRStepOpLowering : public OpRewritePattern<galois::LFSRStepOp> {
+  using OpRewritePattern<galois::LFSRStepOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(galois::LFSRStepOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    // 1) Pull attrs
+    auto widthAttr = op->getAttrOfType<IntegerAttr>("width");
+    auto tapsAttr  = op->getAttrOfType<ArrayAttr>("taps");
+    if (!widthAttr || !tapsAttr)
+      return rewriter.notifyMatchFailure(op, "missing 'width' or 'taps' attr");
+    int width = widthAttr.getInt();
+    if (width < 1 || width > 32)
+      return rewriter.notifyMatchFailure(op, "invalid LFSR width");
+
+    // 2) Current state
+    Value state = op.getInput();
+
+    // 3) Compute feedback = XOR of all tapped bits
+    //    feedback is an i32 0 or 1.
+    Value feedback = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+    for (Attribute a : tapsAttr) {
+      int tap = cast<IntegerAttr>(a).getInt();
+      // shift right by `tap` bits
+      Value tapShift = rewriter.create<arith::ConstantIntOp>(loc, tap, 32);
+      Value bit = rewriter.create<arith::ShRUIOp>(loc, state, tapShift);
+      // mask to lowest bit
+      Value one = rewriter.create<arith::ConstantIntOp>(loc, 1, 32);
+      Value bit0 = rewriter.create<arith::AndIOp>(loc, bit, one);
+      // XOR into feedback
+      feedback = rewriter.create<arith::XOrIOp>(loc, feedback, bit0);
+    }
+
+    // 4) Shift the register right by one
+    Value one = rewriter.create<arith::ConstantIntOp>(loc, 1, 32);
+    Value shifted = rewriter.create<arith::ShRUIOp>(loc, state, one);
+
+    // 5) Insert feedback into the MSB position (bit index = width-1)
+    Value msbPos = rewriter.create<arith::ConstantIntOp>(loc, width - 1, 32);
+    Value feedShifted = rewriter.create<arith::ShLIOp>(loc, feedback, msbPos);
+
+    // 6) OR them together for next state
+    Value nextState = rewriter.create<arith::OrIOp>(loc, shifted, feedShifted);
+
+    rewriter.replaceOp(op, nextState);
+    return success();
+  }
+};
+
 struct ConvertGaloisToArithPass 
     : public PassWrapper<ConvertGaloisToArithPass, OperationPass<ModuleOp>> {
   
@@ -296,6 +345,7 @@ struct ConvertGaloisToArithPass
     target.addIllegalOp<galois::MulOp>();
     target.addIllegalOp<galois::InvOp>();
     target.addIllegalOp<galois::SBoxOp>();
+    target.addIllegalOp<galois::LFSRStepOp>();
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<func::FuncDialect>();
     target.addLegalDialect<tensor::TensorDialect>();
@@ -304,7 +354,8 @@ struct ConvertGaloisToArithPass
     patterns.add<GaloisAddOpLowering, 
                  GaloisMulOpLowering,
                  GaloisInvOpLowering,
-                 GaloisSBoxOpLowering>(&getContext());
+                 GaloisSBoxOpLowering,
+                 GaloisLFSRStepOpLowering>(&getContext());
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();

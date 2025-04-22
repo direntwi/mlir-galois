@@ -156,8 +156,8 @@ LogicalResult LFSRStepOp::verify() {
 
 LogicalResult RSEncodeOp::verify() {
     auto msgLenAttr = getOperation()->getAttrOfType<IntegerAttr>("messageLength");
-    auto nsymAttr   = getOperation()->getAttrOfType<IntegerAttr>("paritySymbols");
-    auto genAttr    = getOperation()->getAttrOfType<ArrayAttr>("generatorPoly");
+    auto nsymAttr = getOperation()->getAttrOfType<IntegerAttr>("paritySymbols");
+    auto genAttr = getOperation()->getAttrOfType<ArrayAttr>("generatorPoly");
     if (!msgLenAttr || !nsymAttr || !genAttr)
       return emitOpError("requires 'messageLength', 'paritySymbols', and 'generatorPoly' attrs");
   
@@ -176,6 +176,50 @@ LogicalResult RSEncodeOp::verify() {
     if ((int)genAttr.size() != nsym + 1)
       return emitOpError("generatorPoly length (")
              << genAttr.size() << ") must equal paritySymbols+1 (" << (nsym+1) << ")";
+
+    for (Value opnd : getOperands()) {
+    if (auto cst = opnd.getDefiningOp<arith::ConstantIntOp>()) {
+        // extract the integer literal
+        int64_t val = cst.value();
+        if (val < 0 || val > 255)
+        return emitOpError("constant operand out of GF(2^8) range [0,255]: ")
+                << val;
+        }
+    }
     return success();
   }
+
+//===----------------------------------------------------------------------===//
+// RSDecodeOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult RSDecodeOp::verify() {
+    auto msgLenAttr = getOperation()->getAttrOfType<IntegerAttr>("messageLength");
+    auto nsymAttr = getOperation()->getAttrOfType<IntegerAttr>("paritySymbols");
+    if (!msgLenAttr || !nsymAttr)
+      return emitOpError("requires 'messageLength' and 'paritySymbols' attrs");
   
+    int64_t k = msgLenAttr.getInt();
+    int64_t nsym = nsymAttr.getInt();
+    int64_t n = k + nsym;
+  
+    if (getNumOperands() != n)
+      return emitOpError("operand count (")
+             << getNumOperands() << ") must equal messageLength + paritySymbols ("
+             << n << ")";
+    if (getNumResults() != k)
+      return emitOpError("result count (")
+             << getNumResults() << ") must equal messageLength (" << k << ")";
+
+    for (Value opnd : getOperands()) {
+      if (auto cst = opnd.getDefiningOp<arith::ConstantIntOp>()) {
+        // extract the integer literal
+        int64_t val = cst.value();
+        if (val < 0 || val > 255)
+          return emitOpError("constant operand out of GF(2^8) range [0,255]: ")
+                 << val;
+        }
+    }
+  
+    return success();
+  }

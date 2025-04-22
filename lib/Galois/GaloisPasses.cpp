@@ -334,7 +334,7 @@ struct GaloisRSEncodeOpLowering : public OpRewritePattern<galois::RSEncodeOp> {
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     // Fetch attrs
-    int64_t k    = op->getAttrOfType<IntegerAttr>("messageLength").getInt();
+    int64_t k = op->getAttrOfType<IntegerAttr>("messageLength").getInt();
     int64_t nsym = op->getAttrOfType<IntegerAttr>("paritySymbols").getInt();
     auto genCoeffs = op->getAttrOfType<ArrayAttr>("generatorPoly").getValue();
 
@@ -357,7 +357,7 @@ struct GaloisRSEncodeOpLowering : public OpRewritePattern<galois::RSEncodeOp> {
       for (int j = 0; j < nsym; ++j) {
         // genCoeffs[0] is the xⁿᵖᵒʷʳ⁻¹ term, so we start at [1]
         int64_t coeff = cast<IntegerAttr>(genCoeffs[j+1]).getInt();
-        // constant GF element
+        
         Value cst = rewriter.create<arith::ConstantIntOp>(loc, coeff, 32);
         Value prod = rewriter.create<galois::MulOp>(loc, feedback, cst);
         parity[j] = rewriter.create<arith::XOrIOp>(loc, parity[j], prod);
@@ -370,6 +370,45 @@ struct GaloisRSEncodeOpLowering : public OpRewritePattern<galois::RSEncodeOp> {
     resultValues.append(parity.begin(), parity.end());
 
     rewriter.replaceOp(op, resultValues);
+    return success();
+  }
+};
+
+struct GaloisRSDecodeOpLowering : public OpRewritePattern<galois::RSDecodeOp> {
+  using OpRewritePattern<galois::RSDecodeOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(galois::RSDecodeOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    // Fetch attrs
+    int64_t k = op->getAttrOfType<IntegerAttr>("messageLength").getInt();
+    int64_t nsym = op->getAttrOfType<IntegerAttr>("paritySymbols").getInt();
+
+    // 1) Copy codeword operands into a working vector
+    SmallVector<Value> work(op.getOperands().begin(), op.getOperands().end());
+    SmallVector<Value> message(k);
+
+    // 2) Polynomial “long division”:
+    //    for i in 0..k-1:
+    //      coef = work[i];
+    //      message[i] = coef;
+    //      for j in 1..nsym:
+    //        work[i+j] = work[i+j] XOR (coef * g[j]);
+    auto genCoeffs = op->getAttrOfType<ArrayAttr>("generatorPoly").getValue();
+    for (int i = 0; i < k; ++i) {
+      Value coef = work[i];
+      message[i] = coef;
+      for (int j = 1; j <= nsym; ++j) {
+        int64_t coeff = cast<IntegerAttr>(genCoeffs[j]).getInt();
+        
+        Value cst = rewriter.create<arith::ConstantIntOp>(loc, coeff, 32);
+        Value prod = rewriter.create<galois::MulOp>(loc, coef, cst);
+        work[i + j] = rewriter.create<arith::XOrIOp>(loc, work[i + j], prod);
+      }
+    }
+
+    // 3) Replace op with the first k entries (the recovered message)
+    rewriter.replaceOp(op, message);
     return success();
   }
 };
@@ -394,6 +433,7 @@ struct ConvertGaloisToArithPass
     target.addIllegalOp<galois::SBoxOp>();
     target.addIllegalOp<galois::LFSRStepOp>();
     target.addIllegalOp<galois::RSEncodeOp>();
+    target.addIllegalOp<galois::RSDecodeOp>();
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<func::FuncDialect>();
     target.addLegalDialect<tensor::TensorDialect>();
@@ -404,7 +444,8 @@ struct ConvertGaloisToArithPass
                  GaloisInvOpLowering,
                  GaloisSBoxOpLowering,
                  GaloisLFSRStepOpLowering,
-                 GaloisRSEncodeOpLowering>(&getContext());
+                 GaloisRSEncodeOpLowering,
+                 GaloisRSDecodeOpLowering>(&getContext());
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();

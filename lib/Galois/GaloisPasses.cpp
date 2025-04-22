@@ -327,6 +327,53 @@ struct GaloisLFSRStepOpLowering : public OpRewritePattern<galois::LFSRStepOp> {
   }
 };
 
+struct GaloisRSEncodeOpLowering : public OpRewritePattern<galois::RSEncodeOp> {
+  using OpRewritePattern<galois::RSEncodeOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(galois::RSEncodeOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    // Fetch attrs
+    int64_t k    = op->getAttrOfType<IntegerAttr>("messageLength").getInt();
+    int64_t nsym = op->getAttrOfType<IntegerAttr>("paritySymbols").getInt();
+    auto genCoeffs = op->getAttrOfType<ArrayAttr>("generatorPoly").getValue();
+
+    // 1) Collect message operands
+    SmallVector<Value> message(op.getOperands().begin(),
+                                op.getOperands().end());
+    // 2) Initialize parity[] = zero, length = nsym
+    SmallVector<Value> parity(nsym,
+      rewriter.create<arith::ConstantIntOp>(loc, 0, 32));
+
+    // 3) Main loop: for each msg[i]
+    for (int i = 0; i < k; ++i) {
+      // feedback = msg[i] XOR parity[0]
+      Value feedback = rewriter.create<arith::XOrIOp>(loc, message[i], parity[0]);
+      // shift parity left by one
+      for (int j = 0; j + 1 < nsym; ++j)
+        parity[j] = parity[j+1];
+      parity[nsym-1] = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+      // update parity[j] ^= gf_mul(feedback, genCoeffs[j+1])
+      for (int j = 0; j < nsym; ++j) {
+        // genCoeffs[0] is the xⁿᵖᵒʷʳ⁻¹ term, so we start at [1]
+        int64_t coeff = cast<IntegerAttr>(genCoeffs[j+1]).getInt();
+        // constant GF element
+        Value cst = rewriter.create<arith::ConstantIntOp>(loc, coeff, 32);
+        Value prod = rewriter.create<galois::MulOp>(loc, feedback, cst);
+        parity[j] = rewriter.create<arith::XOrIOp>(loc, parity[j], prod);
+      }
+    }
+
+    // 4) Build the full codeword: message ++ parity
+    SmallVector<Value> resultValues;
+    resultValues.append(message.begin(), message.end());
+    resultValues.append(parity.begin(), parity.end());
+
+    rewriter.replaceOp(op, resultValues);
+    return success();
+  }
+};
+
 struct ConvertGaloisToArithPass 
     : public PassWrapper<ConvertGaloisToArithPass, OperationPass<ModuleOp>> {
   
@@ -346,6 +393,7 @@ struct ConvertGaloisToArithPass
     target.addIllegalOp<galois::InvOp>();
     target.addIllegalOp<galois::SBoxOp>();
     target.addIllegalOp<galois::LFSRStepOp>();
+    target.addIllegalOp<galois::RSEncodeOp>();
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<func::FuncDialect>();
     target.addLegalDialect<tensor::TensorDialect>();
@@ -355,7 +403,8 @@ struct ConvertGaloisToArithPass
                  GaloisMulOpLowering,
                  GaloisInvOpLowering,
                  GaloisSBoxOpLowering,
-                 GaloisLFSRStepOpLowering>(&getContext());
+                 GaloisLFSRStepOpLowering,
+                 GaloisRSEncodeOpLowering>(&getContext());
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();

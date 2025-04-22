@@ -148,3 +148,34 @@ LogicalResult LFSRStepOp::verify() {
     }
     return success();
 }
+
+//===----------------------------------------------------------------------===//
+// RSEncodeOp
+//===----------------------------------------------------------------------===//
+
+
+LogicalResult RSEncodeOp::verify() {
+    auto msgLenAttr = getOperation()->getAttrOfType<IntegerAttr>("messageLength");
+    auto nsymAttr   = getOperation()->getAttrOfType<IntegerAttr>("paritySymbols");
+    auto genAttr    = getOperation()->getAttrOfType<ArrayAttr>("generatorPoly");
+    if (!msgLenAttr || !nsymAttr || !genAttr)
+      return emitOpError("requires 'messageLength', 'paritySymbols', and 'generatorPoly' attrs");
+  
+    int64_t k    = msgLenAttr.getInt();
+    int64_t nsym = nsymAttr.getInt();
+    // operands == k
+    if (getNumOperands() != k)
+      return emitOpError("operand count (")
+             << getNumOperands() << ") must equal messageLength (" << k << ")";
+    // results == k + nsym
+    if (getNumResults() != k + nsym)
+      return emitOpError("result count (")
+             << getNumResults() << ") must equal messageLength + paritySymbols ("
+             << (k + nsym) << ")";
+    // generatorPoly length == nsym + 1
+    if ((int)genAttr.size() != nsym + 1)
+      return emitOpError("generatorPoly length (")
+             << genAttr.size() << ") must equal paritySymbols+1 (" << (nsym+1) << ")";
+    return success();
+  }
+  

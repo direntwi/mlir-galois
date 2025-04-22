@@ -135,4 +135,17 @@ def Galois_LFSRStepOp : Galois_Op<"lfsr_step", [Pure]> {
     let assemblyFormat = "$input attr-dict `:` type($res)";
 }
 
+def Galois_RSEncodeOp : Galois_Op<"rs_encode", [Pure]> {
+  let summary = "Systematic Reed–Solomon encoder over GF(2^8)";
+  let description = [{
+    Given a message of length k, computes the n‑symbol codeword of
+    length k+(n−k), appending parity symbols so that c(x) ≡ 0 mod g(x).
+  }];
+
+  let arguments = (ins Variadic<I32>:$message);
+  let results = (outs Variadic<I32>:$codeword);
+  let hasVerifier = 1;
+  let assemblyFormat = "$message attr-dict `:` type($message) `->` type($codeword)";
+}
+
 #endif // GALOIS_OPS

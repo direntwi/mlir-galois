@@ -136,16 +136,29 @@ def Galois_LFSRStepOp : Galois_Op<"lfsr_step", [Pure]> {
 }
 
 def Galois_RSEncodeOp : Galois_Op<"rs_encode", [Pure]> {
-  let summary = "Systematic Reed–Solomon encoder over GF(2^8)";
-  let description = [{
-    Given a message of length k, computes the n‑symbol codeword of
-    length k+(n−k), appending parity symbols so that c(x) ≡ 0 mod g(x).
-  }];
+    let summary = "Systematic Reed–Solomon encoder over GF(2^8)";
+    let description = [{
+        Given a message of length k, computes the n‑symbol codeword of
+        length k+(n−k), appending parity symbols so that c(x) ≡ 0 mod g(x).
+    }];
 
-  let arguments = (ins Variadic<I32>:$message);
-  let results = (outs Variadic<I32>:$codeword);
-  let hasVerifier = 1;
-  let assemblyFormat = "$message attr-dict `:` type($message) `->` type($codeword)";
+    let arguments = (ins Variadic<I32>:$message);
+    let results = (outs Variadic<I32>:$codeword);
+    let hasVerifier = 1;
+    let assemblyFormat = "$message attr-dict `:` type($message) `->` type($codeword)";
+}
+
+def Galois_RSDecodeOp : Galois_Op<"rs_decode", [Pure]> {
+    let summary = "Reed–Solomon decoder for systematic code (no errors)";
+    let description = [{
+        Given an (k+nsym)-symbol codeword, returns the first k message symbols.
+        Assumes codeword is valid (no errors) under the generator polynomial.
+    }];
+
+    let arguments = (ins Variadic<I32>:$codeword);
+    let results = (outs Variadic<I32>:$message);
+    let hasVerifier = 1;
+    let assemblyFormat = " $codeword attr-dict `:` type($codeword) `->`type($message)";
 }
 
 #endif // GALOIS_OPS

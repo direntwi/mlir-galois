@@ -161,4 +161,32 @@ def Galois_RSDecodeOp : Galois_Op<"rs_decode", [Pure]> {
     let assemblyFormat = " $codeword attr-dict `:` type($codeword) `->`type($message)";
 }
 
+def Galois_MatMulOp : Galois_Op<"matmul", [Pure, AttrSizedOperandSegments]> {
+    let summary  = "Matrix multiplication in GF(2^8)";
+    let description = [{
+        Given A ∈ GF(2^8)^(M×K) and B ∈ GF(2^8)^(K×N), computes
+        C = A · B   with C ∈ GF(2^8)^(M×N),
+        interpreting all inputs/results as flattened row‑major lists.
+    }];
+
+    // Two variadic input lists (flattened A and B), one variadic result list.
+    let arguments = (ins
+        Variadic<I32>:$lhs,
+        Variadic<I32>:$rhs,
+        I32Attr:$rowsA,
+        I32Attr:$colsA,
+        I32Attr:$colsB
+        );
+
+    let results = (outs Variadic<I32>:$res);
+    let hasVerifier = 1;
+    let assemblyFormat = [{
+    `[` $lhs `]` `by` `[` $rhs `]`
+    attr-dict `:` functional-type(operands, results)
+    }];
+
+
+
+}
+
 #endif // GALOIS_OPS

@@ -223,3 +223,26 @@ LogicalResult RSDecodeOp::verify() {
   
     return success();
   }
+
+//===----------------------------------------------------------------------===//
+// MatMulOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult MatMulOp::verify() {
+    auto rowsA = getOperation()->getAttrOfType<IntegerAttr>("rowsA");
+    auto colsA = getOperation()->getAttrOfType<IntegerAttr>("colsA");
+    auto colsB = getOperation()->getAttrOfType<IntegerAttr>("colsB");
+    if (!rowsA || !colsA || !colsB)
+      return emitOpError("requires 'rowsA', 'colsA', and 'colsB' attrs");
+  
+    int64_t M = rowsA.getInt(), K = colsA.getInt(), N = colsB.getInt();
+    int64_t numA = M * K, numB = K * N, numC = M * N;
+  
+    if (getNumOperands() != numA + numB)
+      return emitOpError("expected ") << (numA + numB)
+        << " inputs (M*K + K*N), got " << getNumOperands();
+    if (getNumResults() != numC)
+      return emitOpError("expected ") << numC
+        << " results (M*N), got " << getNumResults();
+    return success();
+  }

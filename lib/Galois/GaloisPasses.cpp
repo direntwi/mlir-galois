@@ -413,6 +413,44 @@ struct GaloisRSDecodeOpLowering : public OpRewritePattern<galois::RSDecodeOp> {
   }
 };
 
+struct GaloisMatMulOpLowering : OpRewritePattern<galois::MatMulOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(galois::MatMulOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    // shape attrs
+    int64_t M = op->getAttrOfType<IntegerAttr>("rowsA").getInt();
+    int64_t K = op->getAttrOfType<IntegerAttr>("colsA").getInt();
+    int64_t N = op->getAttrOfType<IntegerAttr>("colsB").getInt();
+
+    // split operands into A and B
+    auto operands = op.getOperands();
+    SmallVector<Value> A(operands.begin(), operands.begin() + M*K);
+    SmallVector<Value> B(operands.begin() + M*K, operands.end());
+
+    // emit C entries
+    SmallVector<Value> results;
+    results.reserve(M * N);
+    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+
+    for (int64_t i = 0; i < M; ++i)
+      for (int64_t j = 0; j < N; ++j) {
+        Value acc = zero;
+        for (int64_t k = 0; k < K; ++k) {
+          Value prod = rewriter.create<galois::MulOp>(
+              loc, A[i*K + k], B[k*N + j]);
+          acc = rewriter.create<arith::XOrIOp>(loc, acc, prod);
+        }
+        results.push_back(acc);
+      }
+
+    rewriter.replaceOp(op, results);
+    return success();
+  }
+};
+
+
 struct ConvertGaloisToArithPass 
     : public PassWrapper<ConvertGaloisToArithPass, OperationPass<ModuleOp>> {
   
@@ -434,6 +472,7 @@ struct ConvertGaloisToArithPass
     target.addIllegalOp<galois::LFSRStepOp>();
     target.addIllegalOp<galois::RSEncodeOp>();
     target.addIllegalOp<galois::RSDecodeOp>();
+    target.addIllegalOp<galois::MatMulOp>();
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<func::FuncDialect>();
     target.addLegalDialect<tensor::TensorDialect>();
@@ -445,7 +484,8 @@ struct ConvertGaloisToArithPass
                  GaloisSBoxOpLowering,
                  GaloisLFSRStepOpLowering,
                  GaloisRSEncodeOpLowering,
-                 GaloisRSDecodeOpLowering>(&getContext());
+                 GaloisRSDecodeOpLowering,
+                 GaloisMatMulOpLowering>(&getContext());
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();

@@ -195,4 +195,18 @@ def Galois_MatMulOp : Galois_Op<"matmul", [Pure, AttrSizedOperandSegments]> {
     let assemblyFormat = [{ `[` $lhs `]` `by` `[` $rhs `]` attr-dict `:` functional-type(operands, results) }];
 }
 
+def Galois_LagrangeInterpOp : Galois_Op<"lagrange_interp", [Pure]> {
+    let summary = "Lagrange interpolation over GF(2^8)";
+    let description = [{
+        Given `k` pairs (xᵢ, yᵢ) packed as a single variadic operand list
+        [x₀,y₀, x₁,y₁, …, xₖ₋₁,yₖ₋₁], reconstruct the degree-(k−1) polynomial
+        and return its k coefficients.
+    }];
+
+    let arguments = (ins Variadic<I32>:$coords);
+    let results = (outs Variadic<I32>:$coeffs);
+    let hasVerifier = 1;
+    let assemblyFormat = "$coords attr-dict `:` type($coords) `->` type($coeffs)";
+}
+
 #endif // GALOIS_OPS

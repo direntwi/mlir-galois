@@ -106,6 +106,18 @@ def Galois_InvOp : Galois_Op<"inv", [Pure]> {
     let assemblyFormat = "$input attr-dict `:` type($res)";
 }
 
+def Galois_DivOp : Galois_Op<"div", [Pure]> {
+    let summary = "Division in GF(2^8)";
+    let description = [{ 
+        Divides two GF(2^8) elements: computes lhs * inverse(rhs).
+    }];
+
+    let arguments = (ins I32:$lhs, I32:$rhs);
+    let results = (outs I32:$result);
+    let hasVerifier = 1;
+    let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($result)";
+}
+
 def Galois_SBoxOp : Galois_Op<"sbox", [Pure]> {
     let summary = "AES S‑Box byte substitution in GF(2^8)";
     let description = [{
@@ -180,13 +192,7 @@ def Galois_MatMulOp : Galois_Op<"matmul", [Pure, AttrSizedOperandSegments]> {
 
     let results = (outs Variadic<I32>:$res);
     let hasVerifier = 1;
-    let assemblyFormat = [{
-    `[` $lhs `]` `by` `[` $rhs `]`
-    attr-dict `:` functional-type(operands, results)
-    }];
-
-
-
+    let assemblyFormat = [{ `[` $lhs `]` `by` `[` $rhs `]` attr-dict `:` functional-type(operands, results) }];
 }
 
 #endif // GALOIS_OPS

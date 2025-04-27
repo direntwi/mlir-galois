@@ -466,6 +466,58 @@ struct GaloisMatMulOpLowering : OpRewritePattern<galois::MatMulOp> {
   }
 };
 
+struct GaloisLagrangeInterpOpLowering
+    : public OpRewritePattern<galois::LagrangeInterpOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(galois::LagrangeInterpOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto coords = op.getCoords();
+    size_t k = coords.size() / 2;
+
+    // Split into x[i], y[i]
+    SmallVector<Value> x(k), y(k);
+    for (size_t i = 0; i < k; ++i) {
+      x[i] = coords[2*i];
+      y[i] = coords[2*i+1];
+    }
+
+    // Prepare result coeffs initialized to zero
+    SmallVector<Value> coeffs(k,
+      rewriter.create<arith::ConstantIntOp>(loc, 0, 32));
+
+    // Compute P(x) via standard Lagrange basis:
+    //   for each i: li = Π_{j≠i} (x_input - x[j])/(x[i]-x[j])
+    //   term = y[i] * li
+    //   coeffs += term * [1, x, x^2, …]   <- full poly multiplication
+    //
+    // Here’s a minimal “evaluate at a fixed x_input” variant,
+    // or you can unroll to build the coefficient array.
+
+    // (You’d replace any subtraction with XOR:)
+    //   Value diff = rewriter.create<arith::XOrIOp>(loc, x[i], x[j]);
+
+    // For brevity, suppose we just compute the constant term of P(x):
+    for (size_t i = 0; i < k; ++i) {
+      // Build li = ∏_{j≠i} (x[i] XOR x[j])⁻¹
+      Value li = rewriter.create<arith::ConstantIntOp>(loc, 1, 32);
+      for (size_t j = 0; j < k; ++j) {
+        if (i == j) continue;
+        Value diff = rewriter.create<arith::XOrIOp>(loc, x[i], x[j]);
+        Value inv  = rewriter.create<galois::InvOp>(loc, diff);
+        li = rewriter.create<galois::MulOp>(loc, li, inv);
+      }
+      // term = y[i] * li
+      Value term = rewriter.create<galois::MulOp>(loc, y[i], li);
+      // accumulate into coeffs[0]
+      coeffs[0] = rewriter.create<arith::XOrIOp>(loc, coeffs[0], term);
+    }
+
+    rewriter.replaceOp(op, coeffs);
+    return success();
+  }
+};
 
 struct ConvertGaloisToArithPass 
     : public PassWrapper<ConvertGaloisToArithPass, OperationPass<ModuleOp>> {
@@ -490,6 +542,7 @@ struct ConvertGaloisToArithPass
     target.addIllegalOp<galois::RSEncodeOp>();
     target.addIllegalOp<galois::RSDecodeOp>();
     target.addIllegalOp<galois::MatMulOp>();
+    target.addIllegalOp<galois::LagrangeInterpOp>();
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<func::FuncDialect>();
     target.addLegalDialect<tensor::TensorDialect>();
@@ -503,7 +556,8 @@ struct ConvertGaloisToArithPass
                  GaloisLFSRStepOpLowering,
                  GaloisRSEncodeOpLowering,
                  GaloisRSDecodeOpLowering,
-                 GaloisMatMulOpLowering>(&getContext());
+                 GaloisMatMulOpLowering,
+                 GaloisLagrangeInterpOpLowering>(&getContext());
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();

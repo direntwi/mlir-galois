@@ -264,3 +264,32 @@ LogicalResult MatMulOp::verify() {
         << " results (M*N), got " << getNumResults();
     return success();
   }
+
+//===----------------------------------------------------------------------===//
+// LagrangeInterpOp
+//===----------------------------------------------------------------------===//
+
+  LogicalResult LagrangeInterpOp::verify() {
+    auto coords = getCoords();
+    // Must be an even, non-zero number of ints.
+    if (coords.size() == 0 || coords.size() % 2 != 0)
+        return emitOpError("expects an even, non-zero number of coordinate values");
+
+    size_t k = coords.size() / 2;
+    // Results must have exactly k outputs.
+    if (getNumResults() != k)
+        return emitOpError("must return exactly ")
+            << k << " coefficients but got " << getNumResults();
+
+    // Range-check any constant operands.
+    for (Value v : coords) {
+        if (auto cst = v.getDefiningOp<arith::ConstantIntOp>()) {
+        int64_t val = cst.value();
+        if (val < 0 || val > 255)
+            return emitOpError("coordinate out of GF(2^8) range [0,255]: ")
+                << val;
+        }
+    }
+
+  return success();
+  }

@@ -233,6 +233,22 @@ struct GaloisInvOpLowering : public OpRewritePattern<galois::InvOp> {
   }
 };
 
+struct GaloisDivOpLowering : public OpRewritePattern<galois::DivOp> {
+  using OpRewritePattern<galois::DivOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(galois::DivOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value lhs = op.getLhs(), rhs = op.getRhs();
+    // 1) Compute inv(rhs)
+    Value invR = rewriter.create<galois::InvOp>(loc, rhs);
+    // 2) Multiply by lhs
+    Value res  = rewriter.create<galois::MulOp>(loc, lhs, invR);
+    rewriter.replaceOp(op, res);
+    return success();
+  }
+};
+
 
 struct GaloisSBoxOpLowering : public OpRewritePattern<galois::SBoxOp> {
   using OpRewritePattern<galois::SBoxOp>::OpRewritePattern;
@@ -468,6 +484,7 @@ struct ConvertGaloisToArithPass
     target.addIllegalOp<galois::AddOp>();
     target.addIllegalOp<galois::MulOp>();
     target.addIllegalOp<galois::InvOp>();
+    target.addIllegalOp<galois::DivOp>();
     target.addIllegalOp<galois::SBoxOp>();
     target.addIllegalOp<galois::LFSRStepOp>();
     target.addIllegalOp<galois::RSEncodeOp>();
@@ -481,6 +498,7 @@ struct ConvertGaloisToArithPass
     patterns.add<GaloisAddOpLowering, 
                  GaloisMulOpLowering,
                  GaloisInvOpLowering,
+                 GaloisDivOpLowering,
                  GaloisSBoxOpLowering,
                  GaloisLFSRStepOpLowering,
                  GaloisRSEncodeOpLowering,

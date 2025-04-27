@@ -120,6 +120,24 @@ LogicalResult InvOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
+// DivOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult DivOp::verify() {
+    for (unsigned i = 0; i < 2; ++i) {
+        Value v = getOperand(i);
+        if (auto cst = v.getDefiningOp<arith::ConstantIntOp>()) {
+          int64_t val = cst.value();
+          if (val < 0 || val > 255)
+            return emitOpError("input values must be in range [0, 255]");
+          if (i == 1 && val == 0)
+            return emitOpError("division by zero");
+        }
+      }
+      return success();
+    }
+
+//===----------------------------------------------------------------------===//
 // SBoxOp
 //===----------------------------------------------------------------------===//
 

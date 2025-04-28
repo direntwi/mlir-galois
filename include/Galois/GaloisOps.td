@@ -239,4 +239,25 @@ def Galois_HashOp : Galois_Op<"hash", [Pure]> {
     let assemblyFormat = "$data attr-dict `:` type($result)";
 }
 
+def GF_KeyExpansionOp : Galois_Op<"key_expand", [Pure]> {
+    let summary     = "AES-128 key expansion: derive next round key";
+    let description = [{
+        Given the 16-byte previous round key and a round number [1..10],
+        compute the next 16-byte round key using byte-level S-box, rotation,
+        RCON, and GF(2^8) XORs.
+    }];
+
+    // 4 words × 4 bytes each == 16 variadic I32 bytes
+    let arguments   = (ins
+        Variadic<I32> :$key_bytes,
+        I32Attr: $round
+    );
+    let results     = (outs Variadic<I32> :$next_bytes);
+    let hasVerifier = 1;
+
+    // Syntax: key_expand %key_bytes {round = 1 : i32} : (16xi32) -> (16xi32)
+    let assemblyFormat = "$key_bytes attr-dict `:` functional-type($key_bytes, $next_bytes)";
+    
+}
+
 #endif // GALOIS_OPS

@@ -607,6 +607,72 @@ struct GaloisHashOpLowering : public OpRewritePattern<galois::HashOp> {
 };
 
 
+struct GaloisKeyExpansionOpLowering
+    : public OpRewritePattern<galois::KeyExpansionOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(galois::KeyExpansionOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto bytes = op.getKeyBytes();  // 16 inputs
+
+    // 1) Split into 4-byte words: W0, W1, W2, W3
+    SmallVector<Value> W0(bytes.begin()+0,  bytes.begin()+4);
+    SmallVector<Value> W1(bytes.begin()+4,  bytes.begin()+8);
+    SmallVector<Value> W2(bytes.begin()+8,  bytes.begin()+12);
+    SmallVector<Value> W3(bytes.begin()+12, bytes.begin()+16);
+
+    // 2) “Temp” = RotWord(W3): rotate left by 1 byte
+    SmallVector<Value> Temp = { W3[1], W3[2], W3[3], W3[0] };
+
+    // 3) SubWord(Temp) via SBox
+    for (auto &b : Temp)
+      b = rewriter.create<galois::SBoxOp>(loc, b);
+
+    // 4) XOR Temp[0] with RCON for this round
+    int64_t rnd = op->getAttrOfType<IntegerAttr>("round").getInt();
+    // RCON values for AES-128 rounds 1..10
+    static const uint8_t RCON[11] = {
+      0x00, 0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1B,0x36
+    };
+    Value rcon = rewriter.create<arith::ConstantIntOp>(
+        loc, RCON[rnd], 32);
+    Temp[0] = rewriter.create<arith::XOrIOp>(loc, Temp[0], rcon);
+
+    // 5) Compute new words:
+    //    W0' = W0 XOR Temp
+    //    W1' = W1 XOR W0'
+    //    W2' = W2 XOR W1'
+    //    W3' = W3 XOR W2'
+    SmallVector<Value> OutW(4);
+    OutW[0] = rewriter.create<arith::XOrIOp>(loc, W0[0], Temp[0]);
+    for (unsigned i = 1; i < 4; ++i)
+      OutW[0] = rewriter.create<arith::XOrIOp>(loc, OutW[0], Temp[i]);
+
+    auto xorBytes = [&](ArrayRef<Value> A, ArrayRef<Value> B) {
+      SmallVector<Value> R(4);
+      for (unsigned i = 0; i < 4; ++i)
+        R[i] = rewriter.create<arith::XOrIOp>(loc, A[i], B[i]);
+      return R;
+    };
+    SmallVector<Value> W0p = xorBytes(W0, Temp);
+    SmallVector<Value> W1p = xorBytes(W1, W0p);
+    SmallVector<Value> W2p = xorBytes(W2, W1p);
+    SmallVector<Value> W3p = xorBytes(W3, W2p);
+
+    // 6) Flatten all 16 output bytes
+    SmallVector<Value> result;
+    result.append(W0p.begin(), W0p.end());
+    result.append(W1p.begin(), W1p.end());
+    result.append(W2p.begin(), W2p.end());
+    result.append(W3p.begin(), W3p.end());
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+
 struct ConvertGaloisToArithPass 
     : public PassWrapper<ConvertGaloisToArithPass, OperationPass<ModuleOp>> {
   
@@ -633,6 +699,7 @@ struct ConvertGaloisToArithPass
     target.addIllegalOp<galois::MixColumnsOp>();
     target.addIllegalOp<galois::LagrangeInterpOp>();
     target.addIllegalOp<galois::HashOp>();
+    target.addIllegalOp<galois::KeyExpansionOp>();
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<func::FuncDialect>();
     target.addLegalDialect<tensor::TensorDialect>();
@@ -649,7 +716,8 @@ struct ConvertGaloisToArithPass
                  GaloisMatMulOpLowering,
                  GaloisLagrangeInterpOpLowering,
                  GaloisMixColumnsOpLowering,
-                 GaloisHashOpLowering>(&getContext());
+                 GaloisHashOpLowering,
+                 GaloisKeyExpansionOpLowering>(&getContext());
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();

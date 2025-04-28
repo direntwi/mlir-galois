@@ -345,3 +345,33 @@ LogicalResult HashOp::verify() {
   }
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// KeyExpansionOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult KeyExpansionOp::verify() {
+  // Must have exactly 16 input bytes and 16 results.
+  if (getKeyBytes().size() != 16)
+    return emitOpError("expects 16 key bytes, got ") << getKeyBytes().size();
+  if (getNumResults() != 16)
+    return emitOpError("must return 16 expanded bytes, got ") << getNumResults();
+
+  // Round attr in [1,10]
+  auto roundAttr = (*this)->getAttrOfType<IntegerAttr>("round");
+  if (!roundAttr)
+    return emitOpError("requires a 'round' IntegerAttr");
+  int64_t rnd = roundAttr.getInt();
+  if (rnd < 1 || rnd > 10)
+    return emitOpError("round out of range [1,10]: ") << rnd;
+
+  // Check any constant input is in [0,255]
+  for (auto v : getKeyBytes()) {
+    if (auto c = v.getDefiningOp<arith::ConstantIntOp>()) {
+      int64_t byte = c.value();
+      if (byte < 0 || byte > 255)
+        return emitOpError("key byte out of GF(2^8) range: ") << byte;
+    }
+  }
+  return success();
+}

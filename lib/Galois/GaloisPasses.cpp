@@ -577,6 +577,34 @@ struct GaloisMixColumnsOpLowering : public OpRewritePattern<MixColumnsOp> {
   }
 };
 
+struct GaloisHashOpLowering : public OpRewritePattern<galois::HashOp> {
+  using OpRewritePattern<galois::HashOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(galois::HashOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto data = op.getData();  // ValueRange of bytes
+
+    // Fetch alpha from attribute and make it a constant
+    int64_t alphaVal = op->getAttrOfType<IntegerAttr>("alpha").getInt();
+    Value alphaConst = rewriter.create<arith::ConstantIntOp>(loc, alphaVal, 32);
+
+    // Initialize hash H = 0
+    Value h = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+
+    // H = (H * alpha) ⊕ b  for each b
+    for (Value b : data) {
+      // Multiply in GF(2^8)
+      h = rewriter.create<galois::MulOp>(loc, h, alphaConst);
+      // Add (XOR) the byte
+      h = rewriter.create<galois::AddOp>(loc, h, b);
+    }
+
+    // Replace op with final hash
+    rewriter.replaceOp(op, h);
+    return success();
+  }
+};
 
 
 struct ConvertGaloisToArithPass 
@@ -604,6 +632,7 @@ struct ConvertGaloisToArithPass
     target.addIllegalOp<galois::MatMulOp>();
     target.addIllegalOp<galois::MixColumnsOp>();
     target.addIllegalOp<galois::LagrangeInterpOp>();
+    target.addIllegalOp<galois::HashOp>();
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<func::FuncDialect>();
     target.addLegalDialect<tensor::TensorDialect>();
@@ -619,7 +648,8 @@ struct ConvertGaloisToArithPass
                  GaloisRSDecodeOpLowering,
                  GaloisMatMulOpLowering,
                  GaloisLagrangeInterpOpLowering,
-                 GaloisMixColumnsOpLowering>(&getContext());
+                 GaloisMixColumnsOpLowering,
+                 GaloisHashOpLowering>(&getContext());
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();

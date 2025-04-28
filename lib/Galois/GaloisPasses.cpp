@@ -73,6 +73,25 @@ struct GaloisAddOpLowering : public OpRewritePattern<galois::AddOp> {
   }
 };
 
+struct GaloisSubOpLowering : public OpRewritePattern<galois::SubOp> {
+  using OpRewritePattern<galois::SubOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(galois::SubOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value lhs = op.getLhs(), rhs = op.getRhs();
+
+    // XOR the two operands
+    Value x = rewriter.create<arith::XOrIOp>(loc, lhs, rhs);
+    // Mask to 8 bits
+    Value mask = rewriter.create<arith::ConstantIntOp>(loc, 0xFF, 32);
+    Value result = rewriter.create<arith::AndIOp>(loc, x, mask);
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
 struct GaloisMulOpLowering : public OpRewritePattern<galois::MulOp> {
   using OpRewritePattern<galois::MulOp>::OpRewritePattern;
 
@@ -705,7 +724,8 @@ struct ConvertGaloisToArithPass
     target.addLegalDialect<tensor::TensorDialect>();
 
     RewritePatternSet patterns(&getContext());
-    patterns.add<GaloisAddOpLowering, 
+    patterns.add<GaloisAddOpLowering,
+                 GaloisSubOpLowering,
                  GaloisMulOpLowering,
                  GaloisInvOpLowering,
                  GaloisDivOpLowering,

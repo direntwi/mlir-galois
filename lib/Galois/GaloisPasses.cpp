@@ -519,6 +519,66 @@ struct GaloisLagrangeInterpOpLowering
   }
 };
 
+struct GaloisMixColumnsOpLowering : public OpRewritePattern<MixColumnsOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(MixColumnsOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto vec = op.getCol();  // 4-element ValueRange
+
+    // 1) Build the constant 4×4 AES matrix M as a flat list of 16 GF(2^8) bytes:
+    auto mkC = [&](int v) {
+      return rewriter.create<arith::ConstantIntOp>(loc, v, 32);
+    };
+    SmallVector<Value> mat = {
+      mkC(2), mkC(3), mkC(1), mkC(1),
+      mkC(1), mkC(2), mkC(3), mkC(1),
+      mkC(1), mkC(1), mkC(2), mkC(3),
+      mkC(3), mkC(1), mkC(1), mkC(2)
+    };
+
+    // 2) Prepare the operands (mat + vec)
+    SmallVector<Value> operands(mat.begin(), mat.end());
+    operands.append(vec.begin(), vec.end());
+
+    // 3) Setup attributes for matrix dimensions
+    int64_t rowsA = 4;
+    int64_t colsA = 4;
+    int64_t colsB = 1;
+
+    auto rowsAAttr = rewriter.getI32IntegerAttr(rowsA);
+    auto colsAAttr = rewriter.getI32IntegerAttr(colsA);
+    auto colsBAttr = rewriter.getI32IntegerAttr(colsB);
+
+    NamedAttrList attrs;
+    attrs.set("rowsA", rowsAAttr);
+    attrs.set("colsA", colsAAttr);
+    attrs.set("colsB", colsBAttr);
+
+    // 4) Create the MatMulOp
+   // 4) Create the generic MatMulOp
+  auto mm = rewriter.create<galois::MatMulOp>(
+    loc,
+    // 1) result types
+    TypeRange(op.getResultTypes()),
+    // 2) first operand segment: the 4×4 matrix
+    mat,
+    // 3) second operand segment: the 4×1 vector
+    vec,
+    // 4) the three I32 attributes in order
+    rowsAAttr, colsAAttr, colsBAttr
+  );
+
+  // 5) Replace original MixColumnsOp with results of MatMulOp
+  rewriter.replaceOp(op, mm.getResults());
+
+    return success();
+  }
+};
+
+
+
 struct ConvertGaloisToArithPass 
     : public PassWrapper<ConvertGaloisToArithPass, OperationPass<ModuleOp>> {
   
@@ -542,6 +602,7 @@ struct ConvertGaloisToArithPass
     target.addIllegalOp<galois::RSEncodeOp>();
     target.addIllegalOp<galois::RSDecodeOp>();
     target.addIllegalOp<galois::MatMulOp>();
+    target.addIllegalOp<galois::MixColumnsOp>();
     target.addIllegalOp<galois::LagrangeInterpOp>();
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<func::FuncDialect>();
@@ -557,7 +618,8 @@ struct ConvertGaloisToArithPass
                  GaloisRSEncodeOpLowering,
                  GaloisRSDecodeOpLowering,
                  GaloisMatMulOpLowering,
-                 GaloisLagrangeInterpOpLowering>(&getContext());
+                 GaloisLagrangeInterpOpLowering,
+                 GaloisMixColumnsOpLowering>(&getContext());
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();

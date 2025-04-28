@@ -293,3 +293,27 @@ LogicalResult MatMulOp::verify() {
 
   return success();
   }
+
+//===----------------------------------------------------------------------===//
+// MixColumnsOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult MixColumnsOp::verify() {
+    auto col = getCol();  // ValueRange of inputs
+    // Must have exactly 4 inputs and 4 results.
+    if (col.size() != 4)
+      return emitOpError("expects exactly 4 input bytes, got ") << col.size();
+    if (getNumResults() != 4)
+      return emitOpError("expects exactly 4 result bytes, got ") << getNumResults();
+  
+    // Ensure any constant inputs lie in [0,255].
+    for (unsigned i = 0; i < 4; ++i) {
+      if (auto cst = col[i].getDefiningOp<arith::ConstantIntOp>()) {
+        int64_t v = cst.value();
+        if (v < 0 || v > 255)
+          return emitOpError("input #") << i
+                 << " out of GF(2^8) range [0,255]: " << v;
+      }
+    }
+    return success();
+  }

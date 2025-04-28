@@ -81,6 +81,19 @@ def Galois_AddOp : Galois_Op<"add", [Pure]> {
     let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($res)";
 }
 
+def Galois_SubOp : Galois_Op<"sub", [Pure]> {
+  let summary = "Subtraction in GF(2^8) (identical to addition)";
+  let description = [{
+    Computes `lhs – rhs` in GF(2^8), which in characteristic 2 is just bitwise XOR
+    followed by masking to 8 bits.
+  }];
+
+  let arguments = (ins I32:$lhs, I32:$rhs);
+  let results = (outs I32:$res);
+  let hasVerifier = 1;
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($res)";
+}
+
 def Galois_MulOp : Galois_Op<"mul", [Pure]> {
     let summary = "Multiplication in GF(2^8)";
     let description = [{

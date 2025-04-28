@@ -77,6 +77,25 @@ LogicalResult AddOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
+// SubOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult SubOp::verify() {
+  // Both inputs must be bytes in [0,255].
+  for (unsigned i = 0; i < 2; ++i) {
+    Value v = getOperand(i);
+    if (auto c = v.getDefiningOp<arith::ConstantIntOp>()) {
+      int64_t val = c.value();  // int64_t
+      if (val < 0 || val > 255)
+        return emitOpError("operand #")
+               << i << " out of GF(2^8) range [0,255]: " << val;
+    }
+  }
+  return success();
+}
+
+
+//===----------------------------------------------------------------------===//
 // MulOp
 //===----------------------------------------------------------------------===//
 

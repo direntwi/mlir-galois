@@ -209,4 +209,21 @@ def Galois_LagrangeInterpOp : Galois_Op<"lagrange_interp", [Pure]> {
     let assemblyFormat = "$coords attr-dict `:` type($coords) `->` type($coeffs)";
 }
 
+def Galois_MixColumnsOp : Galois_Op<"mix_columns", [Pure]> {
+  let summary = "AES MixColumns on a single 4-byte column in GF(2^8)";
+  let description = [{
+    Given a column [s0,s1,s2,s3], computes M·[s0,s1,s2,s3] where M is
+    the fixed AES MixColumns matrix over GF(2^8), using the generic `matmul` op.
+  }];
+
+  // One variadic operand: the 4-byte column
+  let arguments = (ins Variadic<I32>:$col);
+  // One variadic result: the 4-byte result
+  let results = (outs Variadic<I32>:$result);
+  let hasVerifier = 1;
+
+  // Parse as: mix_columns [s0, s1, s2, s3] : (i32, i32, i32, i32) -> (i32, i32, i32, i32)
+  let assemblyFormat = "$col attr-dict `:` functional-type($col, $result)";
+}
+
 #endif // GALOIS_OPS

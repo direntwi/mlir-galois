@@ -210,20 +210,33 @@ def Galois_LagrangeInterpOp : Galois_Op<"lagrange_interp", [Pure]> {
 }
 
 def Galois_MixColumnsOp : Galois_Op<"mix_columns", [Pure]> {
-  let summary = "AES MixColumns on a single 4-byte column in GF(2^8)";
-  let description = [{
-    Given a column [s0,s1,s2,s3], computes M·[s0,s1,s2,s3] where M is
-    the fixed AES MixColumns matrix over GF(2^8), using the generic `matmul` op.
-  }];
+    let summary = "AES MixColumns on a single 4-byte column in GF(2^8)";
+    let description = [{
+        Given a column [s0,s1,s2,s3], computes M·[s0,s1,s2,s3] where M is
+        the fixed AES MixColumns matrix over GF(2^8), using the generic `matmul` op.
+    }];
 
-  // One variadic operand: the 4-byte column
-  let arguments = (ins Variadic<I32>:$col);
-  // One variadic result: the 4-byte result
-  let results = (outs Variadic<I32>:$result);
-  let hasVerifier = 1;
+    let arguments = (ins Variadic<I32>:$col);
+    let results = (outs Variadic<I32>:$result);
+    let hasVerifier = 1;
+    let assemblyFormat = "$col attr-dict `:` functional-type($col, $result)";
+}
 
-  // Parse as: mix_columns [s0, s1, s2, s3] : (i32, i32, i32, i32) -> (i32, i32, i32, i32)
-  let assemblyFormat = "$col attr-dict `:` functional-type($col, $result)";
+def Galois_HashOp : Galois_Op<"hash", [Pure]> {
+    let summary = "Rolling polynomial hash over GF(2^8)";
+    let description = [{
+        Computes H = 0; for each input byte b: H = (H * alpha) ⊕ b;
+        Returns the final hash H.
+    }];
+
+    
+    let arguments = (ins 
+        Variadic<I32>:$data,
+        I32Attr:$alpha
+    );
+    let results = (outs I32:$result);
+    let hasVerifier = 1;
+    let assemblyFormat = "$data attr-dict `:` type($result)";
 }
 
 #endif // GALOIS_OPS

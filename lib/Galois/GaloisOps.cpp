@@ -317,3 +317,31 @@ LogicalResult MixColumnsOp::verify() {
     }
     return success();
   }
+
+
+//===----------------------------------------------------------------------===//
+// HashOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult HashOp::verify() {
+  if (getNumOperands() == 0)
+    return emitOpError("requires at least one input byte");
+
+  // Alpha attribute must be present and in [1,255]
+  auto alphaAttr = (*this)->getAttrOfType<IntegerAttr>("alpha");
+  if (!alphaAttr)
+    return emitOpError("requires an 'alpha' IntegerAttr");
+  int64_t alpha = alphaAttr.getInt();
+  if (alpha < 1 || alpha > 255)
+    return emitOpError("alpha out of GF(2^8) range [1,255]: ") << alpha;
+
+  // Check each input constant (if constant) lies in [0,255]
+  for (auto v : getData()) {
+    if (auto c = v.getDefiningOp<arith::ConstantIntOp>()) {
+      int64_t val = c.value();
+      if (val < 0 || val > 255)
+        return emitOpError("input out of GF(2^8) range [0,255]: ") << val;
+    }
+  }
+  return success();
+}

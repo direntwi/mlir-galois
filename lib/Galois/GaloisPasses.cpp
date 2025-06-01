@@ -14,6 +14,11 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Parser/Parser.h"
+#include "mlir/Conversion/Passes.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Conversion/ConvertToLLVM/ToLLVMInterface.h"
+#include "mlir/Conversion/ConvertToLLVM/ToLLVMPass.h"
 
 #include "Galois/GaloisOps.h"
 #include "Galois/GaloisPasses.h"
@@ -93,94 +98,87 @@ struct GaloisSubOpLowering : public OpRewritePattern<galois::SubOp> {
 };
 
 struct GaloisMulOpLowering : public OpRewritePattern<galois::MulOp> {
-  using OpRewritePattern<galois::MulOp>::OpRewritePattern;
+    using OpRewritePattern<galois::MulOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(galois::MulOp op,
-                                PatternRewriter &rewriter) const override {
+    LogicalResult matchAndRewrite(galois::MulOp op,
+                                  PatternRewriter &rewriter) const override {
+      Location loc = op.getLoc();
+      auto module = op->getParentOfType<ModuleOp>();
+      if (!module)
+        return rewriter.notifyMatchFailure(op, "not in a module");
 
-    Location loc = op.getLoc();
-    ModuleOp module = op->getParentOfType<ModuleOp>();
-    if (!module) {
-      return rewriter.notifyMatchFailure(op, "operation not in a module");
-    }
+      // --- 1) Ensure the log/antilog globals have been injected into the module.
+      using GlobalOp = memref::GlobalOp;
 
-    // Check if log_table exists; if not, parse the lookup tables module.
-    if (!module.lookupSymbol<func::FuncOp>("log_table")) {
-      // Parse the embedded module containing log and antilog tables.
-      OwningOpRef<mlir::ModuleOp> lookupTablesModule =
-          parseSourceString<mlir::ModuleOp>(
-              mlir::galois::kLogAntilogTables, rewriter.getContext());
-      if (!lookupTablesModule)
-        return failure();
-
-      // Clone the functions into the current module.
-      SymbolTable symbolTable(module);
-      for (auto func : lookupTablesModule->getOps<func::FuncOp>()) {
-        // Only clone if it doesn't already exist.
-        if (!module.lookupSymbol(func.getName())) {
-          auto insertPt = rewriter.saveInsertionPoint();//new
-          rewriter.setInsertionPointToEnd(module.getBody());
-          rewriter.clone(*func.getOperation());//new
-          rewriter.restoreInsertionPoint(insertPt);
+      // Only inject if the module doesn’t already have a GlobalOp named “log_table”
+      if (!module.lookupSymbol<GlobalOp>("log_table")) {
+        auto lookupM = parseSourceString<ModuleOp>(kNewLogAntilogTables, rewriter.getContext());
+        if (!lookupM) return failure();
+        SymbolTable symTable(module);
+        // 1) Clone all memref.global @log_table / @antilog_table
+        for (auto glob : lookupM->getOps<GlobalOp>()) {
+          if (!module.lookupSymbol<GlobalOp>(glob.getSymName())) {
+            OpBuilder::InsertionGuard g(rewriter);
+            rewriter.setInsertionPointToEnd(module.getBody());
+            rewriter.clone(*glob.getOperation());
+          }
         }
       }
+
+    auto logSymAttr = SymbolRefAttr::get(rewriter.getContext(), "log_table");
+    auto antiSymAttr = SymbolRefAttr::get(rewriter.getContext(), "antilog_table");
+
+      // --- 2) Prepare zero, comparisons
+      Value lhs = op.getLhs(), rhs = op.getRhs();
+      Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+      Value lhsIsZero = rewriter.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::eq, lhs, zero);
+      Value rhsIsZero = rewriter.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::eq, rhs, zero);
+      Value eitherZero =
+          rewriter.create<arith::OrIOp>(loc, lhsIsZero, rhsIsZero);
+
+      // --- 3) Cast operands to index
+      Value lhsIdx =
+          rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), lhs);
+      Value rhsIdx =
+          rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), rhs);
+
+      // --- 4) Load from log_table
+      auto i32Ty = rewriter.getIntegerType(32);
+      auto logMemrefTy = MemRefType::get({256}, i32Ty);
+      Value logTablePtr = rewriter.create<memref::GetGlobalOp>(
+          loc, logMemrefTy, logSymAttr);
+      Value logValLhs =
+          rewriter.create<memref::LoadOp>(loc, logTablePtr, lhsIdx);
+      Value logValRhs =
+          rewriter.create<memref::LoadOp>(loc, logTablePtr, rhsIdx);
+
+      // --- 5) Add logs and mod 255
+      Value logSum =
+          rewriter.create<arith::AddIOp>(loc, logValLhs, logValRhs);
+      Value modConst = rewriter.create<arith::ConstantIntOp>(loc, 255, 32);
+      Value modSum =
+          rewriter.create<arith::RemUIOp>(loc, logSum, modConst);
+
+      // --- 6) Load from antilog_table
+      Value modIdx =
+          rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(),
+                                              modSum);
+      auto antiMemrefTy = MemRefType::get({510}, i32Ty);
+      Value antilogTablePtr = rewriter.create<memref::GetGlobalOp>(
+          loc, antiMemrefTy, antiSymAttr);
+      Value prodVal =
+          rewriter.create<memref::LoadOp>(loc, antilogTablePtr, modIdx);
+
+      // --- 7) Select zero vs product
+      Value result = rewriter.create<arith::SelectOp>(loc, eitherZero, zero,
+                                                      prodVal);
+
+      rewriter.replaceOp(op, result);
+      return success();
     }
-
-    Value lhs = op.getLhs();
-    Value rhs = op.getRhs();
-
-    // Create constant zero (i32).
-    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
-
-    // Check if either operand is zero: (lhs == 0) OR (rhs == 0).
-    Value lhsIsZero = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, lhs, zero);
-    Value rhsIsZero = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rhs, zero);
-    Value eitherZero = rewriter.create<arith::OrIOp>(loc, lhsIsZero, rhsIsZero);
-
-    // Obtain symbol references for the lookup table functions.
-    auto logFuncSymbol = SymbolRefAttr::get(rewriter.getContext(), "log_table");
-    auto antilogFuncSymbol = SymbolRefAttr::get(rewriter.getContext(), "antilog_table");
-
-    // Call the log_table function to get the log table (tensor constant).
-    // Adjust the tensor type if necessary. Here we assume tensor<256xi32>.
-    auto logTableType = mlir::RankedTensorType::get({256}, rewriter.getIntegerType(32));
-    auto logCall = rewriter.create<func::CallOp>(loc, logFuncSymbol, logTableType, ValueRange{});
-    Value logTable = logCall.getResult(0);
-
-    // Cast lhs and rhs to index type for tensor extraction.
-    Value lhsIdx = rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), lhs);
-    Value rhsIdx = rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), rhs);
-
-    // Extract the log value for lhs and rhs using tensor.extract.
-    Value logValLhs = rewriter.create<tensor::ExtractOp>(loc, logTable, ArrayRef<Value>{lhsIdx});
-    Value logValRhs = rewriter.create<tensor::ExtractOp>(loc, logTable, ArrayRef<Value>{rhsIdx});
-
-    // Compute the sum of logarithms.
-    Value logSum = rewriter.create<arith::AddIOp>(loc, logValLhs, logValRhs);
-
-    // Compute (logA + logB) mod 255.
-    Value modConstant = rewriter.create<arith::ConstantIntOp>(loc, 255, 32);
-    Value modSum = rewriter.create<arith::RemSIOp>(loc, logSum, modConstant);
-
-    // Call the antilog_table function to get the antilog table (tensor constant).
-    // Adjust the tensor type if necessary. For example, tensor<510xi32> for antilog.
-    auto antilogTableType = mlir::RankedTensorType::get({510}, rewriter.getIntegerType(32));
-    auto antilogCall = rewriter.create<func::CallOp>(loc, antilogFuncSymbol, antilogTableType, ValueRange{});
-    Value antilogTable = antilogCall.getResult(0);
-
-    // Cast modSum to index type for tensor extraction.
-    Value modIdx = rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), modSum);
-
-    // Extract the corresponding element from the antilog table using modSum as the index.
-    Value prodVal = rewriter.create<tensor::ExtractOp>(loc, antilogTable, ArrayRef<Value>{modIdx});
-
-    // Use a select op: if either input is zero, the result is zero; otherwise, use the extracted value.
-    Value finalResult = rewriter.create<arith::SelectOp>(loc, eitherZero, zero, prodVal);
-
-    rewriter.replaceOp(op, finalResult);
-    return success();
-  }
-};
+  };
 
 struct GaloisInvOpLowering : public OpRewritePattern<galois::InvOp> {
   using OpRewritePattern<galois::InvOp>::OpRewritePattern;
@@ -230,7 +228,7 @@ struct GaloisInvOpLowering : public OpRewritePattern<galois::InvOp> {
     // 4) compute (255 - logVal) mod 255
     Value c255 = rewriter.create<arith::ConstantIntOp>(loc, 255, 32);
     Value diff  = rewriter.create<arith::SubIOp>(loc, c255, logVal);
-    Value invIdx = rewriter.create<arith::RemSIOp>(loc, diff, c255);
+    Value invIdx = rewriter.create<arith::RemUIOp>(loc, diff, c255);
 
     // 5) antilog lookup
     auto antiSym = SymbolRefAttr::get(rewriter.getContext(), "antilog_table");
@@ -701,7 +699,13 @@ struct ConvertGaloisToArithPass
   }
   
   void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<arith::ArithDialect, func::FuncDialect, tensor::TensorDialect>();
+    registry.insert<
+    arith::ArithDialect,
+    func::FuncDialect, 
+    tensor::TensorDialect,
+    LLVM::LLVMDialect,
+    memref::MemRefDialect>();
+    
   }
 
   void runOnOperation() override {
@@ -722,6 +726,8 @@ struct ConvertGaloisToArithPass
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<func::FuncDialect>();
     target.addLegalDialect<tensor::TensorDialect>();
+    target.addLegalDialect<memref::MemRefDialect>();
+    target.addLegalDialect<LLVM::LLVMDialect>();
 
     RewritePatternSet patterns(&getContext());
     patterns.add<GaloisAddOpLowering,

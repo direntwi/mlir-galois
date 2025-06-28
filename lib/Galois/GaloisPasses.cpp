@@ -128,55 +128,90 @@ struct GaloisMulOpLowering : public OpRewritePattern<galois::MulOp> {
     auto logSymAttr = SymbolRefAttr::get(rewriter.getContext(), "log_table");
     auto antiSymAttr = SymbolRefAttr::get(rewriter.getContext(), "antilog_table");
 
-      // --- 2) Prepare zero, comparisons
-      Value lhs = op.getLhs(), rhs = op.getRhs();
-      Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
-      Value lhsIsZero = rewriter.create<arith::CmpIOp>(
-          loc, arith::CmpIPredicate::eq, lhs, zero);
-      Value rhsIsZero = rewriter.create<arith::CmpIOp>(
-          loc, arith::CmpIPredicate::eq, rhs, zero);
-      Value eitherZero =
-          rewriter.create<arith::OrIOp>(loc, lhsIsZero, rhsIsZero);
+    // --- 2) Prepare constants
+    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+    Value one = rewriter.create<arith::ConstantIntOp>(loc, 1, 32);
 
-      // --- 3) Cast operands to index
-      Value lhsIdx =
-          rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), lhs);
-      Value rhsIdx =
-          rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), rhs);
+    // --- 3) Fetch operands
+    Value lhs = op.getLhs();
+    Value rhs = op.getRhs();
 
-      // --- 4) Load from log_table
-      auto i32Ty = rewriter.getIntegerType(32);
-      auto logMemrefTy = MemRefType::get({256}, i32Ty);
-      Value logTablePtr = rewriter.create<memref::GetGlobalOp>(
-          loc, logMemrefTy, logSymAttr);
-      Value logValLhs =
-          rewriter.create<memref::LoadOp>(loc, logTablePtr, lhsIdx);
-      Value logValRhs =
-          rewriter.create<memref::LoadOp>(loc, logTablePtr, rhsIdx);
+    // --- 4) Early checks: zero or one
+    Value lhsIsZero = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, lhs, zero);
+    Value rhsIsZero = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, rhs, zero);
+    Value eitherZero = rewriter.create<arith::OrIOp>(loc, lhsIsZero, rhsIsZero);
 
-      // --- 5) Add logs and mod 255
-      Value logSum =
-          rewriter.create<arith::AddIOp>(loc, logValLhs, logValRhs);
-      Value modConst = rewriter.create<arith::ConstantIntOp>(loc, 255, 32);
-      Value modSum =
-          rewriter.create<arith::RemUIOp>(loc, logSum, modConst);
+    Value lhsIsOne = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, lhs, one);
+    Value rhsIsOne = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, rhs, one);
 
-      // --- 6) Load from antilog_table
-      Value modIdx =
-          rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(),
-                                              modSum);
-      auto antiMemrefTy = MemRefType::get({510}, i32Ty);
-      Value antilogTablePtr = rewriter.create<memref::GetGlobalOp>(
-          loc, antiMemrefTy, antiSymAttr);
-      Value prodVal =
-          rewriter.create<memref::LoadOp>(loc, antilogTablePtr, modIdx);
+    // --- 5) Precompute result for early cases
+    // If lhs == 1 -> rhs
+    // Else if rhs == 1 -> lhs
+    // Else 0
+    Value partialResult = rewriter.create<arith::SelectOp>(
+        loc, lhsIsOne, rhs,
+        rewriter.create<arith::SelectOp>(
+            loc, rhsIsOne, lhs, zero));
 
-      // --- 7) Select zero vs product
-      Value result = rewriter.create<arith::SelectOp>(loc, eitherZero, zero,
-                                                      prodVal);
+    // --- 6) Did we hit any early exit? (eitherZero OR lhsIsOne OR rhsIsOne)
+    Value anyEarly1 = rewriter.create<arith::OrIOp>(loc, eitherZero, lhsIsOne);
+    Value anyEarly = rewriter.create<arith::OrIOp>(loc, anyEarly1, rhsIsOne);
 
-      rewriter.replaceOp(op, result);
-      return success();
+    // --- 7) Prepare index adjustment for log lookup (subtract 1)
+    // (only used if anyEarly == false)
+    Value oneI32 = one;
+    Value lhsAdj = rewriter.create<arith::SubIOp>(loc, lhs, oneI32);
+    Value rhsAdj = rewriter.create<arith::SubIOp>(loc, rhs, oneI32);
+
+    Value lhsIdx = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getIndexType(), lhsAdj);
+    Value rhsIdx = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getIndexType(), rhsAdj);
+
+    // --- 8) Load tables
+    auto i32Ty = rewriter.getIntegerType(32);
+    auto logMemrefTy = MemRefType::get({255}, i32Ty);
+    auto antiMemrefTy = MemRefType::get({255}, i32Ty);
+
+    Value logTablePtr = rewriter.create<memref::GetGlobalOp>(
+        loc, logMemrefTy, logSymAttr);
+    Value antilogTablePtr = rewriter.create<memref::GetGlobalOp>(
+        loc, antiMemrefTy, antiSymAttr);
+
+    // --- 9) Conditionally load log values (safe dummy 0 if early)
+    Value dummyLog = zero;
+    Value logValLhs = rewriter.create<arith::SelectOp>(
+        loc, anyEarly, dummyLog,
+        rewriter.create<memref::LoadOp>(loc, logTablePtr, lhsIdx));
+    Value logValRhs = rewriter.create<arith::SelectOp>(
+        loc, anyEarly, dummyLog,
+        rewriter.create<memref::LoadOp>(loc, logTablePtr, rhsIdx));
+
+    // --- 10) Sum logs and mod 255
+    Value logSum = rewriter.create<arith::AddIOp>(loc, logValLhs, logValRhs);
+    Value modConst = rewriter.create<arith::ConstantIntOp>(loc, 255, 32);
+    Value modSum = rewriter.create<arith::RemUIOp>(loc, logSum, modConst);
+
+    // --- 11) Index cast for antilog lookup
+    Value modIdx = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getIndexType(), modSum);
+
+    // --- 12) Load antilog value (safe dummy 0 if early)
+    Value prodVal = rewriter.create<arith::SelectOp>(
+        loc, anyEarly, zero,
+        rewriter.create<memref::LoadOp>(loc, antilogTablePtr, modIdx));
+
+    // --- 13) If early, return partialResult; else return prodVal
+    Value finalResult = rewriter.create<arith::SelectOp>(
+        loc, anyEarly, partialResult, prodVal);
+
+    // --- 14) Replace op
+    rewriter.replaceOp(op, finalResult);
+    return success();
     }
   };
 
@@ -190,61 +225,65 @@ struct GaloisInvOpLowering : public OpRewritePattern<galois::InvOp> {
     if (!module)
       return rewriter.notifyMatchFailure(op, "not inside a module");
 
+    using GlobalOp = memref::GlobalOp;
+
     // 1) Inject lookup‑table funcs if missing
-    if (!module.lookupSymbol<func::FuncOp>("log_table")) {
-      auto savePt = rewriter.saveInsertionPoint();
-      rewriter.setInsertionPointToEnd(module.getBody());
-      OwningOpRef<ModuleOp> tableMod =
-        parseSourceString<ModuleOp>(mlir::galois::kLogAntilogTables,
-                                    rewriter.getContext());
-      if (!tableMod)
-        return failure();
+    if (!module.lookupSymbol<GlobalOp>("log_table")) {
+      auto lookupM = parseSourceString<ModuleOp>(
+          kNewLogAntilogTables, rewriter.getContext());
+      if (!lookupM) return failure();
       SymbolTable symtab(module);
-      for (auto fn : tableMod->getOps<func::FuncOp>())
-        if (!module.lookupSymbol(fn.getName()))
-          rewriter.clone(*fn.getOperation());
-      rewriter.restoreInsertionPoint(savePt);
+      for (auto glob : lookupM->getOps<GlobalOp>()) {
+        if (!module.lookupSymbol<GlobalOp>(glob.getSymName())) {
+          OpBuilder::InsertionGuard g(rewriter);
+          rewriter.setInsertionPointToEnd(module.getBody());
+          rewriter.clone(*glob.getOperation());
+        }
+      }
     }
 
-    // 2) Zero check
-    Value in = op.getOperand();
+    auto logSymAttr = SymbolRefAttr::get(rewriter.getContext(), "log_table");
+    auto antiSymAttr = SymbolRefAttr::get(rewriter.getContext(), "antilog_table");
+
+    // --- 2) Constants
     Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+    Value one = rewriter.create<arith::ConstantIntOp>(loc, 1, 32);
+    Value c255 = rewriter.create<arith::ConstantIntOp>(loc, 255, 32);
+
+    // --- 3) Zero check
+    Value in = op.getOperand();
     Value isZero = rewriter.create<arith::CmpIOp>(
         loc, arith::CmpIPredicate::eq, in, zero);
 
-    // 3) log lookup
-    auto logSym = SymbolRefAttr::get(rewriter.getContext(), "log_table");
-    auto logTy = RankedTensorType::get({256}, rewriter.getIntegerType(32));
-    Value logTbl = rewriter
-                       .create<func::CallOp>(loc, logSym, logTy, ValueRange{})
-                       .getResult(0);
+    // --- 4) Adjust index for log lookup (subtract 1)
+    Value inAdj = rewriter.create<arith::SubIOp>(loc, in, one);
+    Value inIdx = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getIndexType(), inAdj);
 
-    // index-cast input -> index
-    Value inIdx =
-        rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), in);
-    Value logVal = rewriter.create<tensor::ExtractOp>(
-        loc, logTbl, ArrayRef<Value>{inIdx});
+    // --- 5) Load from log_table
+    auto i32Ty = rewriter.getIntegerType(32);
+    auto logMemrefTy = MemRefType::get({255}, i32Ty);
+    Value logTablePtr = rewriter.create<memref::GetGlobalOp>(
+        loc, logMemrefTy, logSymAttr);
+    Value logVal = rewriter.create<memref::LoadOp>(loc, logTablePtr, inIdx);
 
-    // 4) compute (255 - logVal) mod 255
-    Value c255 = rewriter.create<arith::ConstantIntOp>(loc, 255, 32);
-    Value diff  = rewriter.create<arith::SubIOp>(loc, c255, logVal);
-    Value invIdx = rewriter.create<arith::RemUIOp>(loc, diff, c255);
+    // --- 6) Compute (255 - logVal) mod 255
+    Value diff = rewriter.create<arith::SubIOp>(loc, c255, logVal);
+    Value invIdxI32 = rewriter.create<arith::RemUIOp>(loc, diff, c255);
+    Value invIdx = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getIndexType(), invIdxI32);
 
-    // 5) antilog lookup
-    auto antiSym = SymbolRefAttr::get(rewriter.getContext(), "antilog_table");
-    auto antiTy  = RankedTensorType::get({510}, rewriter.getIntegerType(32));
-    Value antiTbl = rewriter
-                        .create<func::CallOp>(loc, antiSym, antiTy, ValueRange{})
-                        .getResult(0);
+    // --- 7) Load from antilog_table
+    auto antiMemrefTy = MemRefType::get({255}, i32Ty);
+    Value antiTablePtr = rewriter.create<memref::GetGlobalOp>(
+        loc, antiMemrefTy, antiSymAttr);
+    Value invVal = rewriter.create<memref::LoadOp>(loc, antiTablePtr, invIdx);
 
-    // cast invIdx -> index and extract
-    Value idx  = rewriter.create<arith::IndexCastOp>(loc,
-                          rewriter.getIndexType(), invIdx);
-    Value res  = rewriter.create<tensor::ExtractOp>(
-        loc, antiTbl, ArrayRef<Value>{idx});
+    // --- 8) Select: if zero, return zero, else return invVal
+    Value result = rewriter.create<arith::SelectOp>(
+        loc, isZero, zero, invVal);
 
-    // 6) select zero vs. result
-    Value result = rewriter.create<arith::SelectOp>(loc, isZero, zero, res);
+    // --- 9) Replace
     rewriter.replaceOp(op, result);
     return success();
   }

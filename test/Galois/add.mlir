@@ -23,10 +23,10 @@
 // }
 
 module {
-  func.func @test() -> i32 {
+  func.func @main() -> i32 {
     %c30 = arith.constant 30 : i32
     %c10 = arith.constant 10 : i32
     %result = galois.add %c30, %c10 : i32
-    return %result : i32
+    func.return %result : i32
   }
 }

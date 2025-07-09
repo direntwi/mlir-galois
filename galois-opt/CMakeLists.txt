@@ -6,6 +6,7 @@ set(LIBS
         MLIRArithDialect
         MLIROptLib
         MLIRGalois
+        MLIRConvertToLLVMPass
         )
 add_llvm_executable(galois-opt galois-opt.cpp)
 

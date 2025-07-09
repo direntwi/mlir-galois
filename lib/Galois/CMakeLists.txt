@@ -19,4 +19,7 @@ add_mlir_dialect_library(MLIRGalois
         MLIRFuncDialect
         MLIRArithDialect
         MLIRTensorDialect
+        MLIRUBDialect
+        MLIRFuncAllExtensions
+        MLIRTensorAllExtensions
         )

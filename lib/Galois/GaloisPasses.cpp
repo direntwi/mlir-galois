@@ -112,7 +112,7 @@ struct GaloisMulOpLowering : public OpRewritePattern<galois::MulOp> {
 
       // Only inject if the module doesn’t already have a GlobalOp named “log_table”
       if (!module.lookupSymbol<GlobalOp>("log_table")) {
-        auto lookupM = parseSourceString<ModuleOp>(kNewLogAntilogTables, rewriter.getContext());
+        auto lookupM = parseSourceString<ModuleOp>(kLogAntilogTables, rewriter.getContext());
         if (!lookupM) return failure();
         SymbolTable symTable(module);
         // 1) Clone all memref.global @log_table / @antilog_table
@@ -230,7 +230,7 @@ struct GaloisInvOpLowering : public OpRewritePattern<galois::InvOp> {
     // 1) Inject lookup‑table funcs if missing
     if (!module.lookupSymbol<GlobalOp>("log_table")) {
       auto lookupM = parseSourceString<ModuleOp>(
-          kNewLogAntilogTables, rewriter.getContext());
+          kLogAntilogTables, rewriter.getContext());
       if (!lookupM) return failure();
       SymbolTable symtab(module);
       for (auto glob : lookupM->getOps<GlobalOp>()) {
@@ -315,35 +315,43 @@ struct GaloisSBoxOpLowering : public OpRewritePattern<galois::SBoxOp> {
     auto module = op->getParentOfType<ModuleOp>();
 
     // 1) Ensure sbox_table is in the module:
-    if (!module.lookupSymbol<func::FuncOp>("sbox_table")) {
-      auto savePt = rewriter.saveInsertionPoint();
-      rewriter.setInsertionPointToEnd(module.getBody());
-      auto tblMod = parseSourceString<ModuleOp>(
-          mlir::galois::kSBoxLookupTable, rewriter.getContext());
-      if (!tblMod) return failure();
-      SymbolTable sym(module);
-      for (auto fn : tblMod->getOps<func::FuncOp>())
-        if (!module.lookupSymbol(fn.getName()))
-          rewriter.clone(*fn.getOperation());
-      rewriter.restoreInsertionPoint(savePt);
+    using GlobalOp = memref::GlobalOp;
+
+    // 1) Inject lookup‑table funcs if missing
+    if (!module.lookupSymbol<GlobalOp>("sbox_table")) {
+      auto lookupM = parseSourceString<ModuleOp>(
+          kSBoxLookupTable, rewriter.getContext());
+      if (!lookupM) return failure();
+      SymbolTable symtab(module);
+      for (auto glob : lookupM->getOps<GlobalOp>()) {
+        if (!module.lookupSymbol<GlobalOp>(glob.getSymName())) {
+          OpBuilder::InsertionGuard g(rewriter);
+          rewriter.setInsertionPointToEnd(module.getBody());
+          rewriter.clone(*glob.getOperation());
+        }
+      }
     }
 
-    // 2) Perform the table lookup:
-    Value in = op.getInput();
-    // call @sbox_table() -> tensor<256xi32>
-    auto sym = SymbolRefAttr::get(rewriter.getContext(), "sbox_table");
-    auto tblTy = RankedTensorType::get({256}, rewriter.getI32Type());
-    Value table = rewriter
-      .create<func::CallOp>(loc, sym, tblTy, ValueRange{})
-      .getResult(0);
+    // 2) Get the memref:
+    Value tableMemref = rewriter.create<memref::GetGlobalOp>(
+      loc,
+      MemRefType::get({256}, rewriter.getI32Type()),
+      "sbox_table"
+    );
 
-    // index‑cast the input byte to an index:
+    // 3) Cast the input byte to index:
     Value idx = rewriter.create<arith::IndexCastOp>(
-      loc, rewriter.getIndexType(), in);
+      loc,
+      rewriter.getIndexType(),
+      op.getInput()
+    );
 
-    // extract the substituted byte:
-    Value out = rewriter.create<tensor::ExtractOp>(
-      loc, table, ArrayRef<Value>{idx});
+    // 4) Load the substituted value:
+    Value out = rewriter.create<memref::LoadOp>(
+      loc,
+      tableMemref,
+      idx
+    );
 
     rewriter.replaceOp(op, out);
     return success();

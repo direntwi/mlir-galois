@@ -12,7 +12,6 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Conversion/Passes.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -749,7 +748,6 @@ struct ConvertGaloisToArithPass
     registry.insert<
     arith::ArithDialect,
     func::FuncDialect, 
-    tensor::TensorDialect,
     LLVM::LLVMDialect,
     memref::MemRefDialect>();
     
@@ -772,7 +770,6 @@ struct ConvertGaloisToArithPass
     target.addIllegalOp<galois::KeyExpansionOp>();
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<func::FuncDialect>();
-    target.addLegalDialect<tensor::TensorDialect>();
     target.addLegalDialect<memref::MemRefDialect>();
     target.addLegalDialect<LLVM::LLVMDialect>();
 

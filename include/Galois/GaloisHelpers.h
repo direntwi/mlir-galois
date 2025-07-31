@@ -1,5 +1,5 @@
-#ifndef GF_LOOKUP_TABLES_H
-#define GF_LOOKUP_TABLES_H
+#ifndef GF_HELPERS_H
+#define GF_HELPERS_H
 
 #include "llvm/ADT/StringRef.h"
 
@@ -50,6 +50,31 @@ inline constexpr llvm::StringLiteral kSBoxLookupTable = R"mlir(
   ]>
 }
 )mlir";
+
+inline constexpr llvm::StringLiteral kAESMixColumnsMatrix = R"mlir(
+  builtin.module {
+  memref.global "private" constant @aes_mix_columns_matrix: memref<16xi32> =
+    dense<[
+    0x02, 0x03, 0x01, 0x01,
+    0x01, 0x02, 0x03, 0x01,
+    0x01, 0x01, 0x02, 0x03,
+    0x03, 0x01, 0x01, 0x02
+  ]>
+}
+)mlir";
+
+// Allocates a 1D memref<i32> and stores the given values into it.
+inline Value materializeMemref(Location loc, PatternRewriter &rewriter, ArrayRef<Value> values) {
+  auto memType = MemRefType::get({(int64_t)values.size()}, rewriter.getI32Type());
+  Value mem = rewriter.create<memref::AllocOp>(loc, memType);
+
+  for (auto [idx, v] : llvm::enumerate(values)) {
+    Value cIdx = rewriter.create<arith::ConstantIndexOp>(loc, idx);
+    rewriter.create<memref::StoreOp>(loc, v, mem, ValueRange{cIdx});
+  }
+  return mem;
+  }
+  
 } // namespace galois
 
-#endif // GF_LOOKUP_TABLES_H
+#endif // GF_HELPERS_H

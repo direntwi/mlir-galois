@@ -266,23 +266,56 @@ LogicalResult RSDecodeOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult MatMulOp::verify() {
-    auto rowsA = getOperation()->getAttrOfType<IntegerAttr>("rowsA");
-    auto colsA = getOperation()->getAttrOfType<IntegerAttr>("colsA");
-    auto colsB = getOperation()->getAttrOfType<IntegerAttr>("colsB");
-    if (!rowsA || !colsA || !colsB)
-      return emitOpError("requires 'rowsA', 'colsA', and 'colsB' attrs");
-  
-    int64_t M = rowsA.getInt(), K = colsA.getInt(), N = colsB.getInt();
-    int64_t numA = M * K, numB = K * N, numC = M * N;
-  
-    if (getNumOperands() != numA + numB)
-      return emitOpError("expected ") << (numA + numB)
-        << " inputs (M*K + K*N), got " << getNumOperands();
-    if (getNumResults() != numC)
-      return emitOpError("expected ") << numC
-        << " results (M*N), got " << getNumResults();
-    return success();
+  auto lhsVals = getLhs();
+  auto rhsVals = getRhs();
+  auto outputType = mlir::dyn_cast<MemRefType>(getOutput().getType());
+
+  int64_t M = getRowsA();
+  int64_t K = getColsA();
+  int64_t N = getColsB();
+
+  // Check dimensions are positive
+  if (M <= 0 || K <= 0 || N <= 0)
+    return emitOpError("all matrix dimensions must be positive");
+
+  // Check lhs size
+  if (static_cast<int64_t>(lhsVals.size()) != M * K)
+    return emitOpError("lhs operand size does not match rowsA × colsA");
+
+  // Check rhs size
+  if (static_cast<int64_t>(rhsVals.size()) != K * N)
+    return emitOpError("rhs operand size does not match colsA × colsB");
+
+  // Check output memref shape (if statically known)
+  if (outputType.hasStaticShape()) {
+    int64_t outSize = outputType.getNumElements();
+    if (outSize < M * N)
+      return emitOpError("output memref too small for result matrix");
   }
+
+  // Check output type is memref<i32>
+  if (!outputType.getElementType().isInteger(32))
+    return emitOpError("output must be memref of i32");
+
+  // Check value range (if constant)
+  for (auto val : lhsVals)
+    if (auto cst = val.getDefiningOp<arith::ConstantOp>())
+      if (auto intVal = mlir::dyn_cast<IntegerAttr>(cst.getValue()))
+        if (intVal.getInt() < 0 || intVal.getInt() > 255)
+          return emitOpError("lhs values must be in [0, 255]");
+
+  for (auto val : rhsVals)
+    if (auto cst = val.getDefiningOp<arith::ConstantOp>())
+      if (auto intVal = mlir::dyn_cast<IntegerAttr>(cst.getValue()))
+        if (intVal.getInt() < 0 || intVal.getInt() > 255)
+          return emitOpError("rhs values must be in [0, 255]");
+
+  return success();
+}
+
+
+
+
 
 //===----------------------------------------------------------------------===//
 // LagrangeInterpOp

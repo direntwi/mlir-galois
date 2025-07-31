@@ -266,23 +266,74 @@ LogicalResult RSDecodeOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult MatMulOp::verify() {
-    auto rowsA = getOperation()->getAttrOfType<IntegerAttr>("rowsA");
-    auto colsA = getOperation()->getAttrOfType<IntegerAttr>("colsA");
-    auto colsB = getOperation()->getAttrOfType<IntegerAttr>("colsB");
-    if (!rowsA || !colsA || !colsB)
-      return emitOpError("requires 'rowsA', 'colsA', and 'colsB' attrs");
-  
-    int64_t M = rowsA.getInt(), K = colsA.getInt(), N = colsB.getInt();
-    int64_t numA = M * K, numB = K * N, numC = M * N;
-  
-    if (getNumOperands() != numA + numB)
-      return emitOpError("expected ") << (numA + numB)
-        << " inputs (M*K + K*N), got " << getNumOperands();
-    if (getNumResults() != numC)
-      return emitOpError("expected ") << numC
-        << " results (M*N), got " << getNumResults();
-    return success();
+  auto lhsVals = getLhs();
+  auto rhsVals = getRhs();
+  auto outputType = mlir::dyn_cast<MemRefType>(getOutput().getType());
+
+  int64_t M = getRowsA();
+  int64_t K = getColsA();
+  int64_t N = getColsB();
+
+  // Check dimensions are positive
+  if (M <= 0 || K <= 0 || N <= 0)
+    return emitOpError("all matrix dimensions must be positive");
+
+  // --- LHS check ---
+  bool lhsIsMemref = (lhsVals.size() == 1) && mlir::isa<MemRefType>(lhsVals[0].getType());
+  if (!lhsIsMemref) {
+    if ((int64_t)lhsVals.size() != M * K)
+      return emitOpError("lhs operand size does not match rowsA × colsA");
+  } else {
+    auto lhsType = mlir::cast<MemRefType>(lhsVals[0].getType());
+    if (lhsType.hasStaticShape() && lhsType.getNumElements() < M * K)
+      return emitOpError("lhs memref too small for rowsA × colsA");
   }
+
+  // --- RHS check ---
+  bool rhsIsMemref = (rhsVals.size() == 1) && mlir::isa<MemRefType>(rhsVals[0].getType());
+  if (!rhsIsMemref) {
+    if ((int64_t)rhsVals.size() != K * N)
+      return emitOpError("rhs operand size does not match colsA × colsB");
+  } else {
+    auto rhsType = mlir::cast<MemRefType>(rhsVals[0].getType());
+    if (rhsType.hasStaticShape() && rhsType.getNumElements() < K * N)
+      return emitOpError("rhs memref too small for colsA × colsB");
+  }
+
+  // --- Output memref check ---
+  if (outputType.hasStaticShape()) {
+    int64_t outSize = outputType.getNumElements();
+    if (outSize < M * N)
+      return emitOpError("output memref too small for result matrix");
+  }
+
+  if (!outputType.getElementType().isInteger(32))
+    return emitOpError("output must be memref of i32");
+
+  // --- Value range check only for constant scalars ---
+  if (!lhsIsMemref) {
+    for (auto val : lhsVals)
+      if (auto cst = val.getDefiningOp<arith::ConstantOp>())
+        if (auto intVal = mlir::dyn_cast<IntegerAttr>(cst.getValue()))
+          if (intVal.getInt() < 0 || intVal.getInt() > 255)
+            return emitOpError("lhs values must be in [0, 255]");
+  }
+
+  if (!rhsIsMemref) {
+    for (auto val : rhsVals)
+      if (auto cst = val.getDefiningOp<arith::ConstantOp>())
+        if (auto intVal = mlir::dyn_cast<IntegerAttr>(cst.getValue()))
+          if (intVal.getInt() < 0 || intVal.getInt() > 255)
+            return emitOpError("rhs values must be in [0, 255]");
+  }
+
+  return success();
+}
+
+
+
+
+
 
 //===----------------------------------------------------------------------===//
 // LagrangeInterpOp
@@ -317,25 +368,25 @@ LogicalResult MatMulOp::verify() {
 // MixColumnsOp
 //===----------------------------------------------------------------------===//
 
-LogicalResult MixColumnsOp::verify() {
-    auto col = getCol();  // ValueRange of inputs
-    // Must have exactly 4 inputs and 4 results.
-    if (col.size() != 4)
-      return emitOpError("expects exactly 4 input bytes, got ") << col.size();
-    if (getNumResults() != 4)
-      return emitOpError("expects exactly 4 result bytes, got ") << getNumResults();
+// LogicalResult MixColumnsOp::verify() {
+//     auto col = getCol();  // ValueRange of inputs
+//     // Must have exactly 4 inputs and 4 results.
+//     if (col.size() != 4)
+//       return emitOpError("expects exactly 4 input bytes, got ") << col.size();
+//     if (getNumResults() != 4)
+//       return emitOpError("expects exactly 4 result bytes, got ") << getNumResults();
   
-    // Ensure any constant inputs lie in [0,255].
-    for (unsigned i = 0; i < 4; ++i) {
-      if (auto cst = col[i].getDefiningOp<arith::ConstantIntOp>()) {
-        int64_t v = cst.value();
-        if (v < 0 || v > 255)
-          return emitOpError("input #") << i
-                 << " out of GF(2^8) range [0,255]: " << v;
-      }
-    }
-    return success();
-  }
+//     // // Ensure any constant inputs lie in [0,255].
+//     // for (unsigned i = 0; i < 4; ++i) {
+//     //   if (auto cst = col[i].getDefiningOp<arith::ConstantIntOp>()) {
+//     //     int64_t v = cst.value();
+//     //     if (v < 0 || v > 255)
+//     //       return emitOpError("input #") << i
+//     //              << " out of GF(2^8) range [0,255]: " << v;
+//     //   }
+//     // }
+//     return success();
+//   }
 
 
 //===----------------------------------------------------------------------===//

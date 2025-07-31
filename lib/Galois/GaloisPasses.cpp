@@ -16,6 +16,7 @@
 #include "mlir/Conversion/Passes.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Conversion/ConvertToLLVM/ToLLVMInterface.h"
 #include "mlir/Conversion/ConvertToLLVM/ToLLVMPass.h"
 
@@ -496,38 +497,84 @@ struct GaloisMatMulOpLowering : OpRewritePattern<galois::MatMulOp> {
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(galois::MatMulOp op,
-                                PatternRewriter &rewriter) const override {
+                              PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    // shape attrs
-    int64_t M = op->getAttrOfType<IntegerAttr>("rowsA").getInt();
-    int64_t K = op->getAttrOfType<IntegerAttr>("colsA").getInt();
-    int64_t N = op->getAttrOfType<IntegerAttr>("colsB").getInt();
 
-    // split operands into A and B
+    int64_t M = op.getRowsA();
+    int64_t K = op.getColsA();
+    int64_t N = op.getColsB();
     auto operands = op.getOperands();
-    SmallVector<Value> A(operands.begin(), operands.begin() + M*K);
-    SmallVector<Value> B(operands.begin() + M*K, operands.end());
 
-    // emit C entries
-    SmallVector<Value> results;
-    results.reserve(M * N);
+     // --- LHS ---
+    bool lhsIsMemref = mlir::isa<MemRefType>(operands[0].getType());
+    int64_t numLhs = lhsIsMemref ? 1 : (M * K);
+    Value memrefA = lhsIsMemref
+        ? operands[0]
+        : galois::materializeMemref(loc, rewriter,
+              SmallVector<Value>(operands.begin(), operands.begin() + numLhs));
+
+    // --- RHS ---
+    bool rhsIsMemref = mlir::isa<MemRefType>(operands[numLhs].getType());
+    int64_t numRhs = rhsIsMemref ? 1 : (K * N);
+    Value memrefB = rhsIsMemref
+        ? operands[numLhs]
+        : galois::materializeMemref(loc, rewriter,
+              SmallVector<Value>(operands.begin() + numLhs, operands.begin() + numLhs + numRhs));
+
+    // --- Output ---
+    Value outputMemRef = operands[numLhs + numRhs];
+
+    // Loop constants
+    auto c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    auto c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    auto cK = rewriter.create<arith::ConstantIndexOp>(loc, K);
+    auto cN = rewriter.create<arith::ConstantIndexOp>(loc, N);
     Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
 
-    for (int64_t i = 0; i < M; ++i)
-      for (int64_t j = 0; j < N; ++j) {
-        Value acc = zero;
-        for (int64_t k = 0; k < K; ++k) {
-          Value prod = rewriter.create<galois::MulOp>(
-              loc, A[i*K + k], B[k*N + j]);
-          acc = rewriter.create<arith::XOrIOp>(loc, acc, prod);
-        }
-        results.push_back(acc);
-      }
+    // Loop nest: i and j
+    for (int64_t i = 0; i < M; ++i) {
+      Value iVal = rewriter.create<arith::ConstantIndexOp>(loc, i);
 
-    rewriter.replaceOp(op, results);
+      for (int64_t j = 0; j < N; ++j) {
+        Value jVal = rewriter.create<arith::ConstantIndexOp>(loc, j);
+
+        // k-loop
+        auto loop = rewriter.create<scf::ForOp>(loc, c0, cK, c1, ValueRange{zero});
+        rewriter.setInsertionPointToStart(loop.getBody());
+
+        Value k = loop.getInductionVar();
+        Value acc = loop.getRegionIterArgs()[0];
+
+        // A[i*K + k]
+        Value aIdx = rewriter.create<arith::AddIOp>(
+            loc, rewriter.create<arith::MulIOp>(loc, iVal, cK), k);
+        Value lhs = rewriter.create<memref::LoadOp>(loc, memrefA, aIdx);
+
+        // B[k*N + j]
+        Value bIdx = rewriter.create<arith::AddIOp>(
+            loc, rewriter.create<arith::MulIOp>(loc, k, cN), jVal);
+        Value rhs = rewriter.create<memref::LoadOp>(loc, memrefB, bIdx);
+
+        // Multiply in GF(2^8) and XOR accumulate
+        Value prod = rewriter.create<galois::MulOp>(loc, lhs, rhs);
+        Value newAcc = rewriter.create<arith::XOrIOp>(loc, acc, prod);
+        rewriter.create<scf::YieldOp>(loc, newAcc);
+
+        // After loop
+        rewriter.setInsertionPointAfter(loop);
+        Value result = loop.getResult(0);
+        Value outIdx = rewriter.create<arith::AddIOp>(
+            loc, rewriter.create<arith::MulIOp>(loc, iVal, cN), jVal);
+        rewriter.create<memref::StoreOp>(loc, result, outputMemRef, outIdx);
+      }
+    }
+
+    rewriter.eraseOp(op);
     return success();
   }
 };
+
+
 
 struct GaloisLagrangeInterpOpLowering
     : public OpRewritePattern<galois::LagrangeInterpOp> {
@@ -582,60 +629,57 @@ struct GaloisLagrangeInterpOpLowering
   }
 };
 
-struct GaloisMixColumnsOpLowering : public OpRewritePattern<MixColumnsOp> {
+struct GaloisMixColumnsOpLowering : public OpRewritePattern<galois::MixColumnsOp> {
   using OpRewritePattern::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(MixColumnsOp op,
-                                PatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(galois::MixColumnsOp op,
+                              PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    auto vec = op.getCol();  // 4-element ValueRange
+    Value colMemRef = op.getCol();
+    Value outMemRef = op.getOut();
 
-    // 1) Build the constant 4×4 AES matrix M as a flat list of 16 GF(2^8) bytes:
-    auto mkC = [&](int v) {
-      return rewriter.create<arith::ConstantIntOp>(loc, v, 32);
-    };
-    SmallVector<Value> mat = {
-      mkC(2), mkC(3), mkC(1), mkC(1),
-      mkC(1), mkC(2), mkC(3), mkC(1),
-      mkC(1), mkC(1), mkC(2), mkC(3),
-      mkC(3), mkC(1), mkC(1), mkC(2)
-    };
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    if (!module)
+      return rewriter.notifyMatchFailure(op, "not inside a module");
 
-    // 2) Prepare the operands (mat + vec)
-    SmallVector<Value> operands(mat.begin(), mat.end());
-    operands.append(vec.begin(), vec.end());
+    using GlobalOp = memref::GlobalOp;
 
-    // 3) Setup attributes for matrix dimensions
-    int64_t rowsA = 4;
-    int64_t colsA = 4;
-    int64_t colsB = 1;
+    if (!module.lookupSymbol<GlobalOp>("aes_mix_columns_matrix")) {
+      auto matrixModule = parseSourceString<ModuleOp>(
+          kAESMixColumnsMatrix, rewriter.getContext());
+      if (!matrixModule) return failure();
+      SymbolTable symtab(module);
+      for (auto glob : matrixModule->getOps<GlobalOp>()) {
+        if (!module.lookupSymbol<GlobalOp>(glob.getSymName())) {
+          OpBuilder::InsertionGuard g(rewriter);
+          rewriter.setInsertionPointToEnd(module.getBody());
+          rewriter.clone(*glob.getOperation());
+        }
+      }
+    }
 
-    auto rowsAAttr = rewriter.getI32IntegerAttr(rowsA);
-    auto colsAAttr = rewriter.getI32IntegerAttr(colsA);
-    auto colsBAttr = rewriter.getI32IntegerAttr(colsB);
+    // Load matrix reference
+    Value mat = rewriter.create<memref::GetGlobalOp>(
+        loc, MemRefType::get({16}, rewriter.getI32Type()), "aes_mix_columns_matrix");
 
-    NamedAttrList attrs;
-    attrs.set("rowsA", rowsAAttr);
-    attrs.set("colsA", colsAAttr);
-    attrs.set("colsB", colsBAttr);
+    // Load column values
+    SmallVector<Value> colValues;
+    for (int i = 0; i < 4; ++i) {
+      Value idx = rewriter.create<arith::ConstantIndexOp>(loc, i);
+      colValues.push_back(rewriter.create<memref::LoadOp>(loc, colMemRef, idx));
+    }
 
-    // 4) Create the MatMulOp
-   // 4) Create the generic MatMulOp
-  auto mm = rewriter.create<galois::MatMulOp>(
-    loc,
-    // 1) result types
-    TypeRange(op.getResultTypes()),
-    // 2) first operand segment: the 4×4 matrix
-    mat,
-    // 3) second operand segment: the 4×1 vector
-    vec,
-    // 4) the three I32 attributes in order
-    rowsAAttr, colsAAttr, colsBAttr
-  );
+    // Call MatMul
+    rewriter.create<galois::MatMulOp>(
+        loc,
+        /*lhs=*/ValueRange{mat},
+        /*rhs=*/colValues,
+        /*output=*/outMemRef,
+        rewriter.getI32IntegerAttr(4),
+        rewriter.getI32IntegerAttr(4),
+        rewriter.getI32IntegerAttr(1));
 
-  // 5) Replace original MixColumnsOp with results of MatMulOp
-  rewriter.replaceOp(op, mm.getResults());
-
+    rewriter.eraseOp(op);
     return success();
   }
 };
@@ -749,7 +793,8 @@ struct ConvertGaloisToArithPass
     arith::ArithDialect,
     func::FuncDialect, 
     LLVM::LLVMDialect,
-    memref::MemRefDialect>();
+    memref::MemRefDialect,
+    scf::SCFDialect>();
     
   }
 
@@ -772,22 +817,23 @@ struct ConvertGaloisToArithPass
     target.addLegalDialect<func::FuncDialect>();
     target.addLegalDialect<memref::MemRefDialect>();
     target.addLegalDialect<LLVM::LLVMDialect>();
+    target.addLegalDialect<scf::SCFDialect>();
 
     RewritePatternSet patterns(&getContext());
     patterns.add<GaloisAddOpLowering,
-                 GaloisSubOpLowering,
-                 GaloisMulOpLowering,
-                 GaloisInvOpLowering,
-                 GaloisDivOpLowering,
-                 GaloisSBoxOpLowering,
-                 GaloisLFSRStepOpLowering,
-                 GaloisRSEncodeOpLowering,
-                 GaloisRSDecodeOpLowering,
-                 GaloisMatMulOpLowering,
-                 GaloisLagrangeInterpOpLowering,
-                 GaloisMixColumnsOpLowering,
-                 GaloisHashOpLowering,
-                 GaloisKeyExpansionOpLowering>(&getContext());
+                GaloisSubOpLowering,
+                GaloisMulOpLowering,
+                GaloisInvOpLowering,
+                GaloisDivOpLowering,
+                GaloisSBoxOpLowering,
+                GaloisLFSRStepOpLowering,
+                GaloisRSEncodeOpLowering,
+                GaloisRSDecodeOpLowering,
+                GaloisMatMulOpLowering,
+                GaloisLagrangeInterpOpLowering,
+                GaloisMixColumnsOpLowering,
+                GaloisHashOpLowering,
+                GaloisKeyExpansionOpLowering>(&getContext());
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();

@@ -186,26 +186,31 @@ def Galois_RSDecodeOp : Galois_Op<"rs_decode", [Pure]> {
     let assemblyFormat = " $codeword attr-dict `:` type($codeword) `->`type($message)";
 }
 
-def Galois_MatMulOp : Galois_Op<"matmul", [Pure, AttrSizedOperandSegments]> {
-    let summary  = "Matrix multiplication in GF(2^8)";
+def Galois_MatMulOp : Galois_Op<"matmul", [AttrSizedOperandSegments]> {
+    let summary = "Matrix multiplication in GF(2^8)";
     let description = [{
         Given A ∈ GF(2^8)^(M×K) and B ∈ GF(2^8)^(K×N), computes
-        C = A · B   with C ∈ GF(2^8)^(M×N),
-        interpreting all inputs/results as flattened row‑major lists.
+        C = A · B   with C stored in the provided output MemRef.
+        Inputs are flattened row-major lists.
     }];
 
-    // Two variadic input lists (flattened A and B), one variadic result list.
     let arguments = (ins
-        Variadic<I32>:$lhs,
-        Variadic<I32>:$rhs,
+        Variadic<AnyTypeOf<[I32, MemRefOf<[I32]>]>>:$lhs,
+        Variadic<AnyTypeOf<[I32, MemRefOf<[I32]>]>>:$rhs,
+        MemRefOf<[I32]>:$output,
         I32Attr:$rowsA,
         I32Attr:$colsA,
         I32Attr:$colsB
-        );
+    );
 
-    let results = (outs Variadic<I32>:$res);
+    let assemblyFormat = [{
+        `[` $lhs `:` type($lhs) `]`
+        `by`
+        `[` $rhs `:` type($rhs) `]`
+        `into` $output attr-dict `:` type($output)
+    }];
+
     let hasVerifier = 1;
-    let assemblyFormat = [{ `[` $lhs `]` `by` `[` $rhs `]` attr-dict `:` functional-type(operands, results) }];
 }
 
 def Galois_LagrangeInterpOp : Galois_Op<"lagrange_interp", [Pure]> {
@@ -222,17 +227,31 @@ def Galois_LagrangeInterpOp : Galois_Op<"lagrange_interp", [Pure]> {
     let assemblyFormat = "$coords attr-dict `:` type($coords) `->` type($coeffs)";
 }
 
-def Galois_MixColumnsOp : Galois_Op<"mix_columns", [Pure]> {
+// def Galois_MixColumnsOp : Galois_Op<"mix_columns", [Pure]> {
+//     let summary = "AES MixColumns on a single 4-byte column in GF(2^8)";
+//     let description = [{
+//         Given a column [s0,s1,s2,s3], computes M·[s0,s1,s2,s3] where M is
+//         the fixed AES MixColumns matrix over GF(2^8), using the generic `matmul` op.
+//     }];
+
+//     let arguments = (ins Variadic<I32>:$col);
+//     let results = (outs Variadic<I32>:$result);
+//     let hasVerifier = 1;
+//     let assemblyFormat = "$col attr-dict `:` functional-type($col, $result)";
+// }
+
+def Galois_MixColumnsOp : Galois_Op<"mix_columns", []> {
     let summary = "AES MixColumns on a single 4-byte column in GF(2^8)";
     let description = [{
-        Given a column [s0,s1,s2,s3], computes M·[s0,s1,s2,s3] where M is
-        the fixed AES MixColumns matrix over GF(2^8), using the generic `matmul` op.
+        Given a column in memory (4 bytes), performs MixColumns transformation
+        and stores the result in the output column memref.
     }];
 
-    let arguments = (ins Variadic<I32>:$col);
-    let results = (outs Variadic<I32>:$result);
-    let hasVerifier = 1;
-    let assemblyFormat = "$col attr-dict `:` functional-type($col, $result)";
+    let arguments = (ins
+        MemRefOf<[I32]>:$col,       // Input column (4 bytes)
+        MemRefOf<[I32]>:$out        // Output column (4 bytes)
+    );
+    let assemblyFormat = "$col `into` $out attr-dict `:` type($col) `,` type($out)";
 }
 
 def Galois_HashOp : Galois_Op<"hash", [Pure]> {
